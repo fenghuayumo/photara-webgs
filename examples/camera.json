@@ -1,0 +1,12 @@
+{
+  "worldToCamera": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 4, 1],
+  "width": 1280,
+  "height": 720,
+  "fx": 684,
+  "fy": 684,
+  "cx": 640,
+  "cy": 360,
+  "near": 0.01,
+  "model": "pinhole",
+  "distortion": [0, 0, 0, 0]
+}

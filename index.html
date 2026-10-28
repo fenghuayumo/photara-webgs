@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Photara WebGS：在浏览器中交互探索 Gaussian 重建模型。">
+  <title>Photara WebGS — Gaussian Viewer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23121e24'/%3E%3Ccircle cx='16' cy='16' r='8' fill='%23c7e8b1'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./demo.js"></script>
+</head>
+<body>
+  <header><a class="brand" href="./" aria-label="Photara WebGS 首页"><span class="brand-symbol" aria-hidden="true">◉</span>photara<span class="brand-tag">WEBGS</span></a><a class="header-link" href="./examples/embed.html">嵌入示例 <span aria-hidden="true">↗</span></a></header>
+  <main>
+    <div class="intro"><p class="eyebrow">RECONSTRUCTION / IN YOUR BROWSER</p><div class="intro-line"><h1>空间，换一个视角。</h1><p>将 Gaussian 重建带入浏览器。<br>保留原始坐标，自由探索每个细节。</p></div></div>
+    <photara-viewer id="viewer"></photara-viewer>
+    <section class="settings" aria-label="预览配置">
+      <div><span class="settings-title">预览工具</span><span class="muted">PLY 自动识别模型与滤波模式</span></div>
+      <div class="settings-actions"><label>合成示例 <select id="method"><option value="3dgs">3DGS</option><option value="3dgut">3DGUT</option></select></label><button id="generate" type="button">加载示例</button><button id="open-camera" type="button">导入相机 JSON</button><input id="camera" type="file" accept=".json" hidden><button id="capture" type="button" disabled>保存画面</button></div>
+      <p class="tool-status" id="tool-status" role="status"></p>
+    </section>
+    <section class="notes" aria-label="展示说明"><article><span>01 / INTERACTIVE</span><h2>直接探索</h2><p>打开或拖入 Gaussian PLY。旋转、平移、缩放，查看重建空间。</p></article><article><span>02 / PHOTARA</span><h2>延续重建约定</h2><p>读取模型类型与滤波元数据，也可导入相机参数复现指定视角。</p></article><article><span>03 / EMBEDDABLE</span><h2>放进你的网站</h2><p>独立组件，按需加载。为后续场景展示保留简单的接入方式。</p></article></section>
+  </main>
+  <footer><span>PHOTARA / WEBGS</span><span>WebGPU Gaussian Rendering · v0.1</span></footer>
+</body>
+</html>

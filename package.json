@@ -1,0 +1,13 @@
+{
+  "name": "photara-webgs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Embeddable WebGPU Gaussian viewer with Photara conventions",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "test": "node --test tests/core.test.mjs",
+    "test:gpu": "node scripts/test-gpu.mjs"
+  },
+  "exports": "./src/index.js"
+}
