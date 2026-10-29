@@ -84,12 +84,20 @@ fn pixelRay(pixel: vec2f) -> vec3f {
     if (cam.lens.x != 2u) { return normalize(vec3f(uv,1)); }
     let r = length(uv); let k = cam.distortion;
     var lo = 0.0; var hi = PI*0.5;
+    let h2 = hi*hi;
+    let limit = hi*(1.0+h2*(k.x+h2*(k.y+h2*(k.z+h2*k.w))));
+    // Native Photara supports the monotonic front hemisphere. Out-of-lens
+    // pixels have no ray instead of all collapsing onto the horizon.
+    if (!(r < limit)) { return vec3f(0); }
     for (var i = 0u; i < 28u; i++) {
         let m = (lo+hi)*0.5; let q = m*m;
         let td = m*(1.0+q*(k.x+q*(k.y+q*(k.z+q*k.w))));
         if (td < r) { lo = m; } else { hi = m; }
     }
     let theta = (lo+hi)*0.5;
+    let t2 = theta*theta;
+    let derivative = 1.0+t2*(3.0*k.x+t2*(5.0*k.y+t2*(7.0*k.z+9.0*t2*k.w)));
+    if (!(derivative > 1e-6)) { return vec3f(0); }
     let s = select(1.0,sin(theta)/max(r,1e-8),r>1e-8);
-    return vec3f(uv*s,cos(theta));
+    return vec3f(uv*s,max(0.0,cos(theta)));
 }

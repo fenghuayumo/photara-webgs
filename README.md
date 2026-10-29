@@ -109,7 +109,7 @@ property float filter_3D
 | classic / mip3d | 0.3 | 关闭 |
 | mip2d / mip | 0.1 | `sqrt(detBefore/detAfter)` |
 
-3DGUT 使用七点 UT（中心权重 1/4，其余 1/8）估计覆盖，并在片元阶段计算局部空间射线最近点响应。它不复用二维 Gaussian 响应；也不额外添加 3DGS 的 Mip2D 处理，与当前 C++ GUT 分支保持相同分支语义。SH 使用 `center-eye` 方向、INRIA 常量，结果下限为 0，最终显示不额外添加 tone mapping/gamma。
+3DGUT 在线性相机使用七点 UT（中心权重 1/4，其余 1/8）加保守支撑范围；鱼眼使用有限 alpha 支撑椭球的切线区间，全景使用包围球的经纬角域。片元阶段计算局部空间射线最近点响应，不复用二维 Gaussian 响应，也不额外添加 3DGS 的 Mip2D 处理。非线性相机射线以 RGBA32Float 缓存，只在内参、畸变或分辨率变化时重建；移动相机复用相机空间射线。SH 使用 `center-eye` 方向、INRIA 常量，结果下限为 0，最终显示不额外添加 tone mapping/gamma。
 
 ## GPU 管线和已知边界
 
@@ -121,12 +121,26 @@ property float filter_3D
 首版的明确边界：
 
 - 对齐的是参数、坐标、投影和 Gaussian 响应；不是 C++ tile compute rasterizer 的逐位重写。混合顺序的同深度 tie、半精度累积和缺少前向 early termination 都可能产生细小差异。
-- GUT 针孔覆盖额外并上保守包围球。穿越相机的支撑区域，以及 GUT 鱼眼/全景目前使用全屏 quad，保证射线贡献不被小覆盖范围截断，但大场景 overdraw 可能明显。不是已完成的百万级 GUT 性能优化。
+- GUT 针孔覆盖额外并上保守包围球；鱼眼和全景使用保守局部 quad，全景跨接缝复制并保证每像素只混合一次。支撑穿越相机等无法安全界定的情况保留全屏覆盖，极端大尺度 Gaussian 仍可能产生 overdraw。
 - 全景 EWA 对接缝做周期复制并限制每个像素的唯一归属；未增加训练、深度/法线输出、动画、mesh 合成、多个模型独立 placement、LOD、流式加载或压缩格式。
 - 暂无 WebGL fallback；不要将 Rust/WASM 视为解决浏览器 GPU 能力限制的办法。
-- 本轮使用合成数据和独立双精度 oracle 验证，尚未拿实际 Photara 导出场景与 C++ 截图做逐图对比，也没有声称达到 SuperSplat 性能。
+- 已使用 `chuan/images.cache/splat.ply` 的 826,036 个 Gaussian、三个 COLMAP 标定视角、四种相机和两种方法，与 C++ Studio 实际 Vulkan viewport 库进行 24 组截图比较。3DGS 大多数视角接近；GUT 仍有明显差异，详见 [实景比较与性能记录](docs/real-scene-comparison.md)，不能视为已完成 C++ 图像对齐。
 
-下一步优先拿真实 Photara PLY 和标定相机做同视角图像比较，再据实际 profile 优化 GUT 覆盖、可见点压缩、排序和场景分块。
+2026-10-29 已复核 C++ `0954fae`，确认全景去重最小复现修复；Web 同步支持 GUT 精确极点与鱼眼镜头有效域。新旧 24 组逐图指标保存在 `test-results/comparison-20261029/`，GUT 全景/鱼眼误差有所下降，针孔及正交的旧模型差异仍在。
+
+另已完成办公室 `splat_cleaned.ply` 的完整 295.7 万点、960/1920 宽测试，共 42 组 Web/C++ 比较，并加入原始全景照片参照。详见 [办公室大模型测试](docs/office-cleaned-benchmark.md)；本地报告入口为 `test-results/office-cleaned-report.html`。测试工具支持 COLMAP TXT/BIN 的 SIMPLE_PINHOLE、PINHOLE 和扩展 EQUIRECTANGULAR 相机。
+
+实景 GPU timestamp 显示剩余 GUT 成本主要在片元 overdraw。后续可针对大尺度/极扁 Gaussian 做更紧的全景支撑界、tile candidate 压缩和前向 early termination；排序耗时应以 pass profile 为准。
+
+显式启用 GPU profiling（设备支持 `timestamp-query` 时）：
+
+```js
+const renderer = await GaussianRenderer.create(canvas, { profiling: true });
+renderer.render(camera);
+const timing = await renderer.readTimings(); // rays/project/sort/draw，单位 ms
+```
+
+默认不启用查询；`readTimings()` 只读取最近提交帧，需在提交下一帧前等待它完成。无 timestamp-query 支持时返回 `null`。这不是浏览器事件、加载或截图耗时。
 
 ## 验证
 

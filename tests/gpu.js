@@ -45,8 +45,12 @@ function oracle(m,camera,x,y) {
       if(mode==='equirectangular')ray=[Math.cos(vv)*Math.sin(u),Math.sin(vv),Math.cos(vv)*Math.cos(u)];
       if(mode==='fisheye'){
         const r=Math.hypot(u,vv),k=camera.distortion||[0,0,0,0];let lo=0,hi=Math.PI/2;
+        const h2=hi*hi,limit=hi*(1+h2*(k[0]+h2*(k[1]+h2*(k[2]+h2*k[3]))));
+        if(!(r<limit))continue;
         for(let i=0;i<40;i++){const z=(lo+hi)/2,qq=z*z,td=z*(1+qq*(k[0]+qq*(k[1]+qq*(k[2]+qq*k[3]))));if(td<r)lo=z;else hi=z;}
-        const th=(lo+hi)/2,f=r>1e-8?Math.sin(th)/r:1;ray=[u*f,vv*f,Math.cos(th)];
+        const th=(lo+hi)/2,t2=th*th,derivative=1+t2*(3*k[0]+t2*(5*k[1]+t2*(7*k[2]+9*t2*k[3])));
+        if(!(derivative>1e-6))continue;
+        const f=r>1e-8?Math.sin(th)/r:1;ray=[u*f,vv*f,Math.max(0,Math.cos(th))];
       }
       const o=axes.map((a,i)=>dot(a,offset.map((z,j)=>z-t[j]))/s[i]);
       const d=axes.map((a,i)=>dot(a,ray)/s[i]);const peak=-dot(o,d)/dot(d,d);if(peak<=0)continue;
@@ -84,7 +88,7 @@ function oracle(m,camera,x,y) {
 async function test(name,fn){await fn();results.push({name,status:'passed'});document.querySelector('#results').textContent=JSON.stringify(results,null,2);}
 
 try{
-  const r=await GaussianRenderer.create(document.querySelector('#canvas'),{onError:e=>errors.push(e.message)});
+  const r=await GaussianRenderer.create(document.querySelector('#canvas'),{profiling:true,onError:e=>errors.push(e.message)});
   const scene=[{p:[-.12,.08,2],s:[.36,.28,.2],q:[.98,.08,-.12,.09],alpha:.88,color:[.8,.2,.4]},{p:[.2,-.1,2.6],s:[.4,.3,.25],alpha:.65,color:[.1,.6,.3]}];
   for(const method of ['3dgs','3dgut'])for(const filter of ['classic','mip2d','mip3d','mip'])await test(`${method} ${filter}: pixels vs independent double oracle`,async()=>{
     const m=model(scene,method,filter);await r.setModel(m);r.render(cam,{background:[0,0,0]});const pixels=await r.readPixels();
@@ -121,6 +125,49 @@ try{
     const m=model([{p:[.15,.1,.25],s:[.35,.4,.3],q:[.8,.1,.2,.3],alpha:.85}],'3dgut');await r.setModel(m);r.render(cam,{background:[0,0,0]});const p=await r.readPixels();
     for(let y=0;y<cam.height;y+=5)for(let x=0;x<cam.width;x+=5){const expected=oracle(m,cam,x,y);for(let a=0;a<3;a++)assert(Math.abs(p[(y*cam.width+x)*4+a]-expected[a])<=2,'GUT clipped support');}
   });
+  for(const mode of ['fisheye','equirectangular'])await test(`GUT ${mode}: conservative support, seam, poles and cached rays`,async()=>{
+    const c={...cam,model:mode,distortion:[.05,-.01,.002,0]};
+    if(mode==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
+    const items=mode==='fisheye'?[
+      {p:[1.7,.9,1],s:[.09,.3,.12],q:[.8,.2,.1,-.3],alpha:.85},
+      {p:[-1.9,-.9,1],s:[.2,.05,.15],q:[.7,-.2,.3,.1],alpha:.7},
+      {p:[.1,-.12,.18],s:[.2,.03,.14],q:[.8,.1,.3,-.2],alpha:.6},
+    ]:[
+      {p:[.01,.2,-2],s:[.15,.3,.08],alpha:.8},
+      {p:[.02,-2,.03],s:[.25,.1,.2],alpha:.75},
+      {p:[-.02,2,.02],s:[.2,.1,.3],alpha:.7},
+      {p:[.1,.05,.03],s:[.3,.2,.25],alpha:.6},
+    ];
+    const m=model(items,'3dgut');await r.setModel(m);
+    // Intrinsic changes must rebuild the camera-space ray image even at the
+    // same resolution. Pose changes can retain it without changing pixels.
+    const variants=mode==='fisheye'?[c,{...c,fx:38,fy:42,distortion:[-.07,.02,0,0]},c]:[c,{...c,worldToCamera:lookAtCV([.02,0,0],[0,0,2])},c];
+    for(const camera of variants){
+      r.render(camera,{background:[0,0,0]});const p=await r.readPixels();let maxError=0;
+      for(let y=0;y<c.height;y+=2)for(let x=0;x<c.width;x+=2){const expected=oracle(m,camera,x,y);for(let a=0;a<3;a++)maxError=Math.max(maxError,Math.abs(p[(y*c.width+x)*4+a]-expected[a]));}
+      assert(maxError<=2,`${mode} clipped or stale rays: ${maxError}`);
+    }
+  });
+  await test('GUT exact panorama poles retain finite support at low opacity',async()=>{
+    const c={...cam,width:96,height:64,model:'equirectangular',fx:96/(2*Math.PI),fy:64/Math.PI,cx:48,cy:32};
+    for(const alpha of [.9,.006])for(const sign of [-1,1]){
+      const m=model([{p:[0,sign*2,0],s:[.2,.2,.2],alpha,color:[.8,.3,.2]}],'3dgut');
+      await r.setModel(m);r.render(c,{background:[0,0,0]});const p=await r.readPixels();
+      assert(p.some((v,i)=>i%4!==3&&v>0),'Exact panorama pole was culled');
+      let maxError=0;
+      for(let y=0;y<c.height;y+=3)for(let x=0;x<c.width;x+=3){const expected=oracle(m,c,x,y);for(let a=0;a<3;a++)maxError=Math.max(maxError,Math.abs(p[(y*c.width+x)*4+a]-expected[a]));}
+      assert(maxError<=2,`Pole support differs from oracle: ${maxError}`);
+    }
+  });
+  await test('GUT fisheye outside lens returns background instead of horizon rays',async()=>{
+    const c={...cam,width:96,height:64,model:'fisheye',fx:20,fy:20,cx:48,cy:32,distortion:[0,0,0,0]};
+    const m=model([{p:[2,0,.0001],s:[.2,.2,.2],alpha:.9,color:[1,0,0]}],'3dgut');await r.setModel(m);
+    r.render(c,{background:[.13,.07,.11]});const p=await r.readPixels();const i=(32*c.width+95)*4;
+    [33,18,28].forEach((expected,a)=>assert(Math.abs(p[i+a]-expected)<=1,'Invalid fisheye ray rendered geometry'));
+    r.render(c,{background:[0,0,0]});const black=await r.readPixels();let maxError=0;
+    for(let y=0;y<c.height;y+=3)for(let x=0;x<c.width;x+=3){const expected=oracle(m,c,x,y);for(let a=0;a<3;a++)maxError=Math.max(maxError,Math.abs(black[(y*c.width+x)*4+a]-expected[a]));}
+    assert(maxError<=2,`Fisheye lens boundary differs from oracle: ${maxError}`);
+  });
   for(const count of [777,65617])await test(`GPU radix stability: ${count} entries, partial group, culled keys`,async()=>{
     const items=Array.from({length:count},(_,i)=>({p:[0,0,i%19===0?-1:1+((i*167)%149)/50],s:[.02,.02,.02]}));const m=model(items);await r.setModel(m);r.render(cam);
     const output=r.device.createBuffer({size:m.count*8,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
@@ -156,6 +203,11 @@ try{
     await viewer.load(new Blob([text]),{name:'worker-test.ply'});assert(viewer.modelInfo.renderMethod==='3dgut','Worker metadata');
     const old=viewer.load(new Blob([text]));const newer=viewer.loadDemo({side:6});await Promise.allSettled([old,newer]);assert(viewer.modelInfo.count===36,'Stale load replaced new model');
     viewer.dispose();assert(viewer.renderer.disposed,'Device leaked');host.remove();
+  });
+  await test('Optional GPU pass timestamps',async()=>{
+    const timing=await r.readTimings();
+    if(r.profiling)assert(timing&&Object.values(timing).every(v=>Number.isFinite(v)&&v>=0),'Invalid GPU timestamps');
+    else assert(timing===null,'Unsupported timestamps should be optional');
   });
   await r.device.queue.onSubmittedWorkDone();assert(errors.length===0,`GPU errors: ${errors.join('\n')}`);r.dispose();
   window.__gpuResult={passed:true,results,errors};

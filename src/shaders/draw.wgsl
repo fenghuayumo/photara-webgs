@@ -1,5 +1,6 @@
 @group(0) @binding(1) var<storage,read> projected: array<Projected>;
 @group(0) @binding(2) var<storage,read> keys: array<vec2u>;
+@group(0) @binding(3) var rays: texture_2d<f32>;
 struct VertexOut {
     @builtin(position) position: vec4f,
     @location(0) @interpolate(flat) id: u32,
@@ -7,7 +8,7 @@ struct VertexOut {
 };
 @vertex fn vertexMain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> VertexOut {
     var out: VertexOut;
-    let seamCopies = cam.lens.x==3u && cam.config.z==0u;
+    let seamCopies = cam.lens.x==3u;
     let index = select(instance,instance/3u,seamCopies);
     let id = keys[index].y;
     out.id = id;
@@ -31,7 +32,14 @@ struct VertexOut {
     let pixel = floor(input.position.xy);
     var distance = 0.0;
     if (cam.config.z==1u) {
-        let ray = pixelRay(pixel);
+        if (cam.lens.x==3u) {
+            let dx = pixel.x-p.centerConic.x-input.seamShift;
+            if (dx < -0.5*cam.viewport.x || dx >= 0.5*cam.viewport.x) { discard; }
+        }
+        var ray = vec3f(0,0,1);
+        if (cam.lens.x>=2u) { ray = textureLoad(rays,vec2i(pixel),0).xyz; }
+        else if (cam.lens.x==0u) { ray = normalize(vec3f((pixel-cam.intrinsics.zw)/cam.intrinsics.xy,1)); }
+        if (!(dot(ray,ray)>0.0)) { discard; }
         var origin = vec3f(p.row0.w,p.row1.w,p.row2.w);
         if (cam.lens.x==1u) {
             let offset = vec3f((pixel-cam.intrinsics.zw)/cam.intrinsics.xy,0);

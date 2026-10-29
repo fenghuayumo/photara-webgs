@@ -11,15 +11,16 @@ const BLIT = `
 
 /** Standalone WebGPU renderer. No DOM listeners, animation loop or framework. */
 export class GaussianRenderer {
-  static async create(canvas, { onError = error => console.error(error), powerPreference = 'high-performance' } = {}) {
+  static async create(canvas, { onError = error => console.error(error), powerPreference = 'high-performance', profiling = false } = {}) {
     if (!globalThis.isSecureContext || !navigator.gpu) throw new Error('需要支持 WebGPU 的浏览器，并通过 HTTPS 或 localhost 打开。');
     const adapter = await navigator.gpu.requestAdapter({ powerPreference });
     if (!adapter) throw new Error('当前设备没有可用的 WebGPU 适配器。');
-    const device = await adapter.requestDevice({ requiredLimits: {
+    const device = await adapter.requestDevice({ requiredFeatures: profiling && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [], requiredLimits: {
       maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
       maxBufferSize: adapter.limits.maxBufferSize,
     } });
     const renderer = new GaussianRenderer(canvas, device, onError);
+    renderer.profiling = profiling && device.features.has('timestamp-query');
     try { await renderer._initialize(); return renderer; }
     catch (error) { renderer.dispose(); throw error; }
   }
@@ -37,7 +38,7 @@ export class GaussianRenderer {
     if (!this.context) throw new Error('Canvas 无法创建 WebGPU 上下文。');
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
-    const names = ['common', 'project', 'draw', 'radix'];
+    const names = ['common', 'project', 'draw', 'radix', 'rays'];
     const sources = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`./shaders/${name}.wgsl`, import.meta.url));
       if (!response.ok) throw new Error(`Shader ${name}: HTTP ${response.status}`);
@@ -50,12 +51,16 @@ export class GaussianRenderer {
       if (errors.length) throw new Error(`${label}: ${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
       return shader;
     };
-    const [projection, draw, radix, blit] = await Promise.all([
+    const [projection, draw, radix, blit, rays] = await Promise.all([
       module('Photara projection', sources[0] + sources[1]),
       module('Photara draw', sources[0] + sources[2]),
-      module('GPU radix sort', sources[3]), module('Presentation', BLIT),
+      module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]),
     ]);
     this.uniform = device.createBuffer({ label: 'CV camera', size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    if (this.profiling) {
+      this.timestampQueries = device.createQuerySet({ type: 'timestamp', count: 8 });
+      this.timestampBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+    }
     this.sortLayout = device.createBindGroupLayout({ entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 16 } },
       ...Array.from({ length: 6 }, (_, i) => ({ binding: i + 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: i === 0 ? 'read-only-storage' : 'storage' } })),
@@ -64,6 +69,7 @@ export class GaussianRenderer {
     device.pushErrorScope('validation');
     try {
       this.projectPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: projection, entryPoint: 'main' } });
+      this.rayPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: rays, entryPoint: 'main' } });
       this.sortPipelines = await Promise.all(['histogramMain', 'prefixMain', 'scatterMain'].map(entryPoint => device.createComputePipelineAsync({ layout: sortPipelineLayout, compute: { module: radix, entryPoint } })));
       this.drawPipeline = await device.createRenderPipelineAsync({
         layout: 'auto', vertex: { module: draw, entryPoint: 'vertexMain' },
@@ -110,9 +116,8 @@ export class GaussianRenderer {
       const sortParams = buffer('Radix parameters', params.byteLength, params, GPUBufferUsage.UNIFORM);
       const bind = (layout, list) => d.createBindGroup({ layout, entries: list.map((b, binding) => ({ binding, resource: { buffer: b } })) });
       const projectGroup = bind(this.projectPipeline.getBindGroupLayout(0), [this.uniform, attributes, sh, projected, keys[0]]);
-      const drawGroup = bind(this.drawPipeline.getBindGroupLayout(0), [this.uniform, projected, keys[0]]);
       const sortGroups = [0, 1].map(i => d.createBindGroup({ layout: this.sortLayout, entries: [sortParams, keys[i], keys[1 - i], ranks, hist, prefixes, totals].map((b, binding) => ({ binding, resource: { buffer: b, ...(binding === 0 ? { size: 16 } : {}) } })) }));
-      state = { buffers, groups, keys, projected, projectGroup, drawGroup, sortGroups };
+      state = { buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
     } catch (error) { failure = error; }
     const validation = await d.popErrorScope(), memory = await d.popErrorScope();
     if (failure || validation || memory || this.disposed) {
@@ -129,9 +134,22 @@ export class GaussianRenderer {
     if (width > this.device.limits.maxTextureDimension2D || height > this.device.limits.maxTextureDimension2D) throw new Error('Viewport exceeds GPU texture limits');
     if (this.width === width && this.height === height) return;
     this.texture?.destroy(); this.captureTexture?.destroy(); this.captureTexture = null;
+    this.rayKey = null;
     this.width = this.canvas.width = width; this.height = this.canvas.height = height;
     this.texture = this.device.createTexture({ label: 'Linear numeric Gaussian accumulation', size: [width, height], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    if (this.state) this.state.drawGroup = null;
     this.presentGroup = this.device.createBindGroup({ layout: this.presentPipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: this.texture.createView() }] });
+  }
+
+  _ensureRays(width, height) {
+    if (this.rayWidth === width && this.rayHeight === height) return;
+    this.rayTexture?.destroy(); this.rayKey = null;
+    this.rayWidth = width; this.rayHeight = height;
+    this.rayTexture = this.device.createTexture({ label: 'Cached nonlinear camera rays', size: [width, height], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    this.rayGroup = this.device.createBindGroup({ layout: this.rayPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: this.rayTexture.createView() },
+    ] });
+    if (this.state) this.state.drawGroup = null;
   }
 
   render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1 } = {}) {
@@ -142,6 +160,13 @@ export class GaussianRenderer {
     if (!Number.isFinite(scaleModifier) || scaleModifier <= 0 || background.length !== 3 || !background.every(v => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error('Invalid render options');
     const { width, height } = camera;
     this._resize(width, height);
+    const nonlinearGut = renderMethod === '3dgut' && CAMERA_MODELS[camera.model] >= 2;
+    if (nonlinearGut) this._ensureRays(width, height);
+    else if (!this.rayTexture) this._ensureRays(1, 1);
+    if (!this.state.drawGroup) this.state.drawGroup = this.device.createBindGroup({ layout: this.drawPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.state.projected } },
+      { binding: 2, resource: { buffer: this.state.keys[0] } }, { binding: 3, resource: this.rayTexture.createView() },
+    ] });
     const bytes = new ArrayBuffer(160), f = new Float32Array(bytes), u = new Uint32Array(bytes);
     f.set(camera.worldToCamera, 0); f.set(camera.position || cameraPosition(camera.worldToCamera), 16);
     f.set([camera.fx, camera.fy, camera.cx, camera.cy], 20);
@@ -151,20 +176,45 @@ export class GaussianRenderer {
     f.set(camera.distortion || [0, 0, 0, 0], 36);
     this.device.queue.writeBuffer(this.uniform, 0, bytes);
     const encoder = this.device.createCommandEncoder({ label: 'Photara Gaussian frame' });
-    let pass = encoder.beginComputePass();
+    const timestamps = (begin, end) => this.profiling && (begin !== undefined || end !== undefined) ? { timestampWrites: {
+      querySet: this.timestampQueries, ...(begin === undefined ? {} : { beginningOfPassWriteIndex: begin }),
+      ...(end === undefined ? {} : { endOfPassWriteIndex: end }),
+    } } : {};
+    const rayKey = JSON.stringify([camera.model, width, height, camera.fx, camera.fy, camera.cx, camera.cy, camera.distortion || [0, 0, 0, 0]]);
+    this.raysUpdated = nonlinearGut && this.rayKey !== rayKey;
+    if (this.raysUpdated) {
+      const rays = encoder.beginComputePass(timestamps(0, 1)); rays.setPipeline(this.rayPipeline); rays.setBindGroup(0, this.rayGroup);
+      rays.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8)); rays.end(); this.rayKey = rayKey;
+    }
+    let pass = encoder.beginComputePass(timestamps(2, 3));
     pass.setPipeline(this.projectPipeline); pass.setBindGroup(0, this.state.projectGroup); pass.dispatchWorkgroups(this.state.groups); pass.end();
     // Separate passes give explicit storage-write/read synchronization.
     for (let i = 0; i < 8; i++) for (let stage = 0; stage < 3; stage++) {
-      pass = encoder.beginComputePass();
+      pass = encoder.beginComputePass(timestamps(i === 0 && stage === 0 ? 4 : undefined, i === 7 && stage === 2 ? 5 : undefined));
       pass.setPipeline(this.sortPipelines[stage]); pass.setBindGroup(0, this.state.sortGroups[i % 2], [i * 256]);
       pass.dispatchWorkgroups(stage === 1 ? 16 : this.state.groups); pass.end();
     }
-    pass = encoder.beginRenderPass({ colorAttachments: [{ view: this.texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [...background, 1] }] });
+    pass = encoder.beginRenderPass({ ...timestamps(6, 7), colorAttachments: [{ view: this.texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [...background, 1] }] });
     pass.setPipeline(this.drawPipeline); pass.setBindGroup(0, this.state.drawGroup);
-    const seamCopies = camera.model === 'equirectangular' && renderMethod === '3dgs' ? 3 : 1;
+    const seamCopies = camera.model === 'equirectangular' ? 3 : 1;
     pass.draw(6, this.model.count * seamCopies); pass.end();
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, this.presentGroup);
+    if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 8, this.timestampBuffer, 0);
     this.device.queue.submit([encoder.finish()]); this.frameCount++;
+  }
+
+  /** Optional GPU pass timings, read only by an explicit profiling caller. */
+  async readTimings() {
+    this._check();
+    if (!this.profiling || !this.frameCount) return null;
+    const output = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const encoder = this.device.createCommandEncoder(); encoder.copyBufferToBuffer(this.timestampBuffer, 0, output, 0, 64);
+    this.device.queue.submit([encoder.finish()]);
+    try {
+      await output.mapAsync(GPUMapMode.READ); const t = new BigUint64Array(output.getMappedRange());
+      const ms = i => Number(t[i + 1] - t[i]) / 1e6;
+      return { rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: ms(4), draw_ms: ms(6) };
+    } finally { output.destroy(); }
   }
 
   _blit(encoder, view, pipeline, group) {
@@ -196,7 +246,8 @@ export class GaussianRenderer {
   dispose() {
     if (this.disposed) return;
     this.disposed = true; this.resources.forEach(b => b.destroy()); this.resources = [];
-    this.uniform?.destroy(); this.texture?.destroy(); this.captureTexture?.destroy();
+    this.uniform?.destroy(); this.texture?.destroy(); this.captureTexture?.destroy(); this.rayTexture?.destroy();
+    this.timestampQueries?.destroy(); this.timestampBuffer?.destroy();
     this.context?.unconfigure(); this.device.destroy(); this.model = null;
   }
 }

@@ -14,6 +14,6 @@ export function serve(port = Number(process.env.PORT || 4173)) {
       res.writeHead(200, { 'Content-Type': types[extname(path)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
       res.end(await readFile(path));
     } catch { res.writeHead(404); res.end('Not found'); }
-  }).listen(port, '127.0.0.1', () => console.log(`Photara WebGS: http://localhost:${port}`));
+  }).listen(port, '127.0.0.1', function () { console.log(`Photara WebGS: http://localhost:${this.address().port}`); });
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) serve();

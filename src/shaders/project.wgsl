@@ -36,6 +36,60 @@ fn slopeBounds(v: f32, z: f32, radius: f32) -> vec2f {
     let h = radius*sqrt(max(0.0,v*v+z*z-radius*radius));
     return (vec2f(v*z)-vec2f(h,-h))/(z*z-radius*radius);
 }
+fn intervalProduct(a: vec2f, b: vec2f) -> vec2f {
+    let p = vec4f(a.x*b.x,a.x*b.y,a.y*b.x,a.y*b.y);
+    return vec2f(min(min(p.x,p.y),min(p.z,p.w)),max(max(p.x,p.y),max(p.z,p.w)));
+}
+// The finite alpha support is inside a sphere of radius sqrt(threshold)*max(scale).
+// Bound its nonlinear projection analytically, including panorama seam/poles.
+fn ellipsoidSlope(v: f32, z: f32, crossCov: f32, vv: f32, zz: f32) -> vec2f {
+    let denominator = z*z-zz;
+    let center = (v*z-crossCov)/denominator;
+    let discriminant = max(0.0,(v*z-crossCov)*(v*z-crossCov)-denominator*(v*v-vv));
+    let extent = sqrt(discriminant)/denominator;
+    return vec2f(center-extent,center+extent);
+}
+fn nonlinearBounds(t: vec3f, radius: f32, a: vec3f, b: vec3f, c: vec3f, threshold: f32) -> vec4f {
+    let full = vec4f(vec2f(-1),cam.viewport.xy+1.0);
+    let distance = length(t);
+    if (cam.lens.x == 3u) {
+        if (distance <= radius+1e-5) { return full; }
+        let h = length(t.xz);
+        let latitude = atan2(t.y,h);
+        let angle = asin(clamp(radius/distance,0.0,1.0));
+        let by = clamp(vec2f(latitude-angle,latitude+angle),vec2f(-PI*0.5),vec2f(PI*0.5))*cam.intrinsics.y+cam.intrinsics.w;
+        if (h <= radius+1e-5) { return vec4f(-1.0,by.x-1.0,cam.viewport.x+1.0,by.y+1.0); }
+        let longitude = atan2(t.x,t.z);
+        let extent = asin(clamp(radius/h,0.0,1.0));
+        let bx = vec2f(longitude-extent,longitude+extent)*cam.intrinsics.x+cam.intrinsics.z;
+        return vec4f(bx.x-1.0,by.x-1.0,bx.y+1.0,by.y+1.0);
+    }
+    let xAxis = vec3f(a.x,b.x,c.x); let yAxis = vec3f(a.y,b.y,c.y); let zAxis = vec3f(a.z,b.z,c.z);
+    // Tangent planes of the support ellipsoid give much tighter fisheye
+    // intervals than a max-scale sphere for flattened reconstruction splats.
+    let padding = 1e-5*radius*radius+1e-12;
+    let zz = threshold*dot(zAxis,zAxis)+padding;
+    if (t.z <= sqrt(zz)+1e-5) { return full; }
+    let bx = ellipsoidSlope(t.x,t.z,threshold*dot(xAxis,zAxis),threshold*dot(xAxis,xAxis)+padding,zz);
+    let by = ellipsoidSlope(t.y,t.z,threshold*dot(yAxis,zAxis),threshold*dot(yAxis,yAxis)+padding,zz);
+    let closest = max(vec2f(bx.x,by.x),vec2f(0))+min(vec2f(bx.y,by.y),vec2f(0));
+    let farthest = max(abs(vec2f(bx.x,by.x)),abs(vec2f(bx.y,by.y)));
+    let rmin = length(closest); let rmax = length(farthest);
+    let th = vec2f(atan(rmin),atan(rmax));
+    // atan(r)/r is decreasing. Bound the theta polynomial term by term;
+    // this remains conservative with mixed-sign distortion coefficients.
+    var polynomial = vec2f(1); var power = th*th;
+    for (var i=0u; i<4u; i++) {
+        let term = cam.distortion[i]*power;
+        polynomial += vec2f(min(term.x,term.y),max(term.x,term.y));
+        power *= th*th;
+    }
+    if (polynomial.x <= 0.0) { return full; }
+    let radial = vec2f(atan(rmax)/max(rmax,1e-8),select(1.0,atan(rmin)/max(rmin,1e-8),rmin>1e-8))*polynomial;
+    let x = intervalProduct(bx,radial)*cam.intrinsics.x+cam.intrinsics.z;
+    let y = intervalProduct(by,radial)*cam.intrinsics.y+cam.intrinsics.w;
+    return vec4f(x.x-1.0,y.x-1.0,x.y+1.0,y.y+1.0);
+}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) tid: vec3u) {
     let id = tid.x;
@@ -45,7 +99,12 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
     projected[id] = out;
     let g = gaussians[id];
     let t = (cam.view*vec4f(g.centerOpacity.xyz,1)).xyz;
-    let p = project(t);
+    var p = project(t);
+    // Undefined longitude on a pole does not make finite GUT support invisible.
+    if (cam.config.z == 1u && cam.lens.x == 3u && p.valid == 0u && length(t) > 1e-6) {
+        p.pixel = vec2f(cam.viewport.x*0.5,select(0.0,cam.viewport.y,t.y>0.0));
+        p.valid = 1u;
+    }
     let opacity = g.centerOpacity.w;
     if (p.valid == 0u || opacity < ALPHA_FLOOR) { return; }
     let vr = viewRotation(); let q = g.quaternion;
@@ -57,6 +116,15 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
     out.color = vec4f(colorSH(id,g.centerOpacity.xyz),opacity);
     let threshold = max(0.0,2.0*log(opacity/ALPHA_FLOOR));
     if (cam.config.z == 1u) {
+        let radius = sqrt(threshold)*max(scales.x,max(scales.y,scales.z));
+        if (cam.lens.x >= 2u) {
+            out.bounds = nonlinearBounds(t,radius,a,b,c,threshold);
+            // One periodic copy owns each pixel even for full-width support.
+            if (cam.lens.x == 3u && out.bounds.z-out.bounds.x >= cam.viewport.x) {
+                out.bounds.x = -1.0; out.bounds.z = cam.viewport.x+1.0;
+            }
+            out.centerConic.xy = 0.5*(out.bounds.xy+out.bounds.zw);
+        } else {
         // Seven-point UT (lambda=1); used only for screen coverage.
         var points: array<vec2f,7>;
         points[0] = p.pixel;
@@ -81,7 +149,6 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
         out.bounds = vec4f(mu-extent,mu+extent);
         // A conservative sphere encloses the finite 3D alpha support. This
         // prevents UT underestimation near the camera from cutting off rays.
-        let radius = sqrt(threshold)*max(scales.x,max(scales.y,scales.z));
         if (cam.lens.x == 0u && t.z > radius+1e-5 && !boundary) {
             let bx = slopeBounds(t.x,t.z,radius)*cam.intrinsics.x+vec2f(cam.intrinsics.z);
             let by = slopeBounds(t.y,t.z,radius)*cam.intrinsics.y+vec2f(cam.intrinsics.w);
@@ -90,9 +157,9 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
             let e = sqrt(threshold)*vec2f(length(vec3f(a.x,b.x,c.x)),length(vec3f(a.y,b.y,c.y)))*cam.intrinsics.xy+1.0;
             out.bounds = vec4f(p.pixel-e,p.pixel+e);
         } else {
-            // Nonlinear lens support and near-plane crossings are conservative
-            // full-viewport quads in v1. The per-pixel response is still 3D.
+            // Support crossing the eye still requires full-viewport coverage.
             out.bounds = vec4f(vec2f(-1),cam.viewport.xy+1.0);
+        }
         }
         out.row0 = vec4f(ax/scales.x,-dot(ax,t)/scales.x);
         out.row1 = vec4f(ay/scales.y,-dot(ay,t)/scales.y);
@@ -115,7 +182,8 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
         out.centerConic = vec4f(p.pixel,cov.z/det,-cov.y/det);
         out.extra.x = cov.x/det;
     }
-    if (cam.lens.x != 3u && (any(out.bounds.zw < vec2f(0)) || any(out.bounds.xy > cam.viewport.xy))) { return; }
+    if (out.bounds.w < 0.0 || out.bounds.y > cam.viewport.y) { return; }
+    if (cam.lens.x != 3u && (out.bounds.z < 0.0 || out.bounds.x > cam.viewport.x)) { return; }
     out.extra.y = 1.0;
     projected[id] = out;
     let depth = select(t.z,length(t),cam.config.z==1u || cam.lens.x==3u);
