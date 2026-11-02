@@ -1,6 +1,22 @@
+import { validateModelSH, toCanonicalModel } from './model.js';
+
 /** Exact Float32 palette indirection. Canonical model.sh remains authoritative. */
-export function prepareSHStorage(model, mode = 'auto') {
+export function prepareSHStorage(model, mode = 'auto', { segmented = false } = {}) {
   if (!['auto', 'float32', 'palette'].includes(mode)) throw new Error('Unknown SH storage mode');
+  if (model.shLayout === 'packed') {
+    validateModelSH(model);
+    if (model.bases === 1) return { data: model.shDC, format: 'float32' };
+    if (mode === 'float32') return { data: toCanonicalModel(model).sh, format: 'float32' };
+    const { count, shDC, shPalette: { labels, coefficients } } = model;
+    // Never expand packed SH implicitly, even when a tiny model's palette is
+    // bigger than its canonical array. float32 is an explicit opt-in above.
+    if (segmented) return { format: 'palette', byteLength: count * 16 + coefficients.byteLength, segments: [
+      { offset: 0, data: shDC }, { offset: count * 12, data: labels }, { offset: count * 16, data: coefficients },
+    ] };
+    const data = new Float32Array(count * 4 + coefficients.length);
+    data.set(shDC); new Uint32Array(data.buffer).set(labels, count * 3); data.set(coefficients, count * 4);
+    return { data, format: 'palette' };
+  }
   const raw = () => ({ data: model.sh, format: 'float32' });
   if (mode === 'float32' || !model.shPalette || model.bases === 1) return raw();
   const { labels, coefficients, count } = model.shPalette;

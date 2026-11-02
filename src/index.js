@@ -3,7 +3,7 @@ export { parseSog, decodeSogPlanes, readSogArchive } from './sog.js';
 export { GaussianRenderer } from './renderer.js';
 export { GaussianViewer } from './viewer.js';
 export { parsePly } from './ply.js';
-export { createDemoModel, activateGaussian, validateModel } from './model.js';
+export { createDemoModel, activateGaussian, validateModel, toCanonicalModel } from './model.js';
 export { lookAtCV, resizeCamera, cameraPosition, validateCamera, CAMERA_MODELS } from './camera.js';
 import { GaussianViewer } from './viewer.js';
 

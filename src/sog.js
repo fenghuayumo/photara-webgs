@@ -94,7 +94,9 @@ function checkMeta(m, maxSplats) {
 }
 
 /** Pure numeric decode, also used by independent fixture tests. Converts SOG RUB coordinates to Photara RDF, including rotation and SH. */
-export function decodeSogPlanes(meta, planes, { maxSplats = DEFAULT_MAX_SPLATS, name = 'SOG model' } = {}) {
+export function decodeSogPlanes(meta, planes, { maxSplats = DEFAULT_MAX_SPLATS, name = 'SOG model', shLayout = 'canonical', profile = false } = {}) {
+  if (!['canonical', 'packed'].includes(shLayout)) fail('Unknown SH layout');
+  const start = performance.now();
   checkMeta(meta, maxSplats);
   const [low, high] = meta.means.files.map(f => planes[f]), scale = planes[meta.scales.files[0]], quat = planes[meta.quats.files[0]], dc = planes[meta.sh0.files[0]];
   const image = p => p && Number.isInteger(p.width) && Number.isInteger(p.height) && p.width > 0 && p.height > 0 && p.data instanceof Uint8Array && p.data.length === p.width * p.height * 4;
@@ -103,14 +105,24 @@ export function decodeSogPlanes(meta, planes, { maxSplats = DEFAULT_MAX_SPLATS, 
   const palette = meta.shN && planes[meta.shN.files[0]], labels = meta.shN && planes[meta.shN.files[1]];
   for (const p of [high, scale, quat, dc, ...(labels ? [labels] : [])]) if (!image(p) || p.width !== low.width || p.height !== low.height) fail('Mismatched property image dimensions');
   if (meta.shN && (!image(labels) || !image(palette) || palette.width !== 64 * rest || palette.height < Math.ceil(meta.shN.count / 64))) fail('Invalid SH palette images');
-  const data = new Float32Array(meta.count * 12), sh = new Float32Array(meta.count * bases * 3);
+  const packed = shLayout === 'packed';
+  const data = new Float32Array(meta.count * 12), sh = new Float32Array(meta.count * (packed ? 1 : bases) * 3);
+  let shPalette;
+  if (rest) {
+    const coefficients = new Float32Array(meta.shN.count * rest * 3), indices = new Uint32Array(meta.count);
+    for (let entry = 0; entry < meta.shN.count; entry++) for (let b = 0; b < rest; b++) {
+      const pixel = (Math.floor(entry / 64) * palette.width + entry % 64 * rest + b) * 4;
+      for (let c = 0; c < 3; c++) coefficients[(entry * rest + b) * 3 + c] = meta.shN.codebook[palette.data[pixel + c]] * SH_SIGNS[b];
+    }
+    shPalette = { count: meta.shN.count, labels: indices, coefficients };
+  }
   for (let i = 0; i < meta.count; i++) {
     const k = i * 4, d = i * 12;
     for (let c = 0; c < 3; c++) {
       const q = low.data[k + c] + high.data[k + c] * 256, n = meta.means.mins[c] + (meta.means.maxs[c] - meta.means.mins[c]) * q / 65535;
       data[d + c] = (c === 0 ? 1 : -1) * Math.sign(n) * Math.expm1(Math.abs(n));
       data[d + 4 + c] = Math.exp(meta.scales.codebook[scale.data[k + c]]);
-      sh[i * bases * 3 + c] = meta.sh0.codebook[dc.data[k + c]];
+      sh[i * (packed ? 1 : bases) * 3 + c] = meta.sh0.codebook[dc.data[k + c]];
     }
     data[d + 3] = dc.data[k + 3] / 255;
     const mode = quat.data[k + 3] - 252; if (mode < 0 || mode > 3) fail('Invalid quaternion mode');
@@ -120,26 +132,21 @@ export function decodeSogPlanes(meta, planes, { maxSplats = DEFAULT_MAX_SPLATS, 
     for (let c = 0; c < 4; c++) data[d + 8 + c] = q[c] / length * (c < 2 ? 1 : -1);
     if (rest) {
       const label = labels.data[k] + labels.data[k + 1] * 256; if (label >= meta.shN.count) fail('SH label exceeds palette');
-      for (let b = 0; b < rest; b++) {
-        const p = (Math.floor(label / 64) * palette.width + label % 64 * rest + b) * 4;
-        for (let c = 0; c < 3; c++) sh[(i * bases + b + 1) * 3 + c] = meta.shN.codebook[palette.data[p + c]] * SH_SIGNS[b];
-      }
+      shPalette.labels[i] = label;
+      if (!packed) sh.set(shPalette.coefficients.subarray(label * rest * 3, (label + 1) * rest * 3), (i * bases + 1) * 3);
     }
   }
-  const model = { count: meta.count, bases, degree: meta.shN?.bands || 0, data, sh, renderMethod: '3dgs', filterMode: meta.model === 'antialiased' ? 'mip2d' : 'classic', hasFilter3D: false, name, sourceFormat: 'sog' };
-  if (rest) {
-    const coefficients = new Float32Array(meta.shN.count * rest * 3), indices = new Uint32Array(meta.count);
-    for (let entry = 0; entry < meta.shN.count; entry++) for (let b = 0; b < rest; b++) {
-      const pixel = (Math.floor(entry / 64) * palette.width + entry % 64 * rest + b) * 4;
-      for (let c = 0; c < 3; c++) coefficients[(entry * rest + b) * 3 + c] = meta.shN.codebook[palette.data[pixel + c]] * SH_SIGNS[b];
-    }
-    for (let i = 0; i < meta.count; i++) indices[i] = labels.data[i * 4] + labels.data[i * 4 + 1] * 256;
-    model.shPalette = { count: meta.shN.count, labels: indices, coefficients };
-  }
-  validateModel(model); model.bounds = modelBounds(data); return model;
+  const model = { count: meta.count, bases, degree: meta.shN?.bands || 0, data, ...(packed ? { shLayout, shDC: sh } : { sh }), renderMethod: '3dgs', filterMode: meta.model === 'antialiased' ? 'mip2d' : 'classic', hasFilter3D: false, name, sourceFormat: 'sog' };
+  if (shPalette) model.shPalette = shPalette;
+  const decoded = performance.now();
+  validateModel(model); model.bounds = modelBounds(data);
+  if (profile) model.loadStats = { numeric_ms: decoded - start, validation_bounds_ms: performance.now() - decoded };
+  return model;
 }
 
 export async function parseSog(buffer, { baseUrl, decodeImage = decodeSogImage, maxBytes = MAX_BYTES, ...options } = {}) {
+  const start = performance.now();
+  if (options.shLayout !== undefined && !['canonical', 'packed'].includes(options.shLayout)) fail('Unknown SH layout');
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength > maxBytes) fail('Invalid input or size limit exceeded');
   let readFile, meta;
   if (new Uint8Array(buffer)[0] === 80) {
@@ -160,6 +167,13 @@ export async function parseSog(buffer, { baseUrl, decodeImage = decodeSogImage, 
   checkMeta(meta, options.maxSplats ?? DEFAULT_MAX_SPLATS);
   const files = [...new Set([meta.means, meta.scales, meta.quats, meta.sh0, ...(meta.shN ? [meta.shN] : [])].flatMap(p => p.files))], planes = {};
   // Decode sequentially to bound temporary image/GPU allocations.
+  const imagesStart = performance.now();
   for (const file of files) planes[file] = await decodeImage(await readFile(file));
-  return decodeSogPlanes(meta, planes, options);
+  const imagesEnd = performance.now(), model = decodeSogPlanes(meta, planes, options);
+  if (options.profile) Object.assign(model.loadStats, {
+    metadata_ms: imagesStart - start, images_ms: imagesEnd - imagesStart, parse_ms: performance.now() - start,
+    sourceBytes: buffer.byteLength, decodedPlaneBytes: Object.values(planes).reduce((sum, p) => sum + p.data.byteLength, 0),
+    modelBytes: model.data.byteLength + (model.sh || model.shDC).byteLength + (model.shPalette ? model.shPalette.labels.byteLength + model.shPalette.coefficients.byteLength : 0),
+  });
+  return model;
 }

@@ -97,26 +97,34 @@ export class GaussianRenderer {
 
   _check() { if (this.disposed || this.lost) throw new Error('Renderer is disposed or its GPU device was lost'); }
 
-  /** Canonical model buffers; atomically replaces the previous GPU model. */
-  async setModel(model, { shStorage = 'auto' } = {}) {
+  /** Canonical or packed model buffers; atomically replaces the GPU model. */
+  async setModel(model, { shStorage = 'auto', profiling = false } = {}) {
+    const start = profiling ? performance.now() : 0;
     this._check(); validateModel(model);
-    const packedSH = prepareSHStorage(model, shStorage);
+    const validated = profiling ? performance.now() : 0;
+    const packedSH = prepareSHStorage(model, shStorage, { segmented: true });
+    const prepared = profiling ? performance.now() : 0;
+    const shBytes = packedSH.byteLength ?? packedSH.data.byteLength;
     const d = this.device, n = model.count, groups = Math.ceil(n / 256);
     const max = Math.min(d.limits.maxStorageBufferBindingSize, d.limits.maxBufferSize);
-    for (const size of [n * 96, packedSH.data.byteLength, model.data.byteLength]) if (size > max) throw new Error(`模型超出此设备单个 GPU buffer 的限制（${Math.floor(max / 1048576)} MiB）。`);
+    for (const size of [n * 96, shBytes, model.data.byteLength]) if (size > max) throw new Error(`模型超出此设备单个 GPU buffer 的限制（${Math.floor(max / 1048576)} MiB）。`);
     if (groups > d.limits.maxComputeWorkgroupsPerDimension) throw new Error('Model exceeds GPU dispatch limits');
     const buffers = [];
     const buffer = (label, size, initial, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC) => {
       const b = d.createBuffer({ label, size: Math.max(4, size), usage, mappedAtCreation: Boolean(initial) });
       buffers.push(b);
-      if (initial) { new Uint8Array(b.getMappedRange()).set(new Uint8Array(initial.buffer, initial.byteOffset, initial.byteLength)); b.unmap(); }
+      if (initial) {
+        const target = new Uint8Array(b.getMappedRange());
+        for (const { data, offset } of Array.isArray(initial) ? initial : [{ data: initial, offset: 0 }]) target.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), offset);
+        b.unmap();
+      }
       return b;
     };
     d.pushErrorScope('out-of-memory'); d.pushErrorScope('validation');
     let state, failure;
     try {
       const attributes = buffer('Activated Gaussians', model.data.byteLength, model.data);
-      const sh = buffer(`INRIA SH (${packedSH.format})`, packedSH.data.byteLength, packedSH.data);
+      const sh = buffer(`INRIA SH (${packedSH.format})`, shBytes, packedSH.segments || packedSH.data);
       const projected = buffer('Projected Gaussians', n * 96);
       const keys = [buffer('Keys A', n * 8), buffer('Keys B', n * 8)];
       const ranks = buffer('Local radix ranks', n * 4);
@@ -130,7 +138,7 @@ export class GaussianRenderer {
       const counts = buffer('Visible block counts', groups * 4), offsets = buffer('Visible block offsets', groups * 4);
       const indirect = buffer('Visible indirect arguments', 32, null, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC);
       const compactGroup = bind(this.compactLayout, [this.uniform, keys[0], keys[1], ranks, counts, offsets, sortParams, indirect]);
-      state = { memory: { attributes: model.data.byteLength, sh: packedSH.data.byteLength, projected: n * 96 }, attributes, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
+      state = { memory: { attributes: model.data.byteLength, sh: shBytes, projected: n * 96 }, attributes, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
     } catch (error) { failure = error; }
     const validation = await d.popErrorScope(), memory = await d.popErrorScope();
     if (failure || validation || memory || this.disposed) {
@@ -142,6 +150,11 @@ export class GaussianRenderer {
     this.hasRenderedModel = false;
     // Retain only metadata on the renderer; the viewer may release CPU arrays.
     this.model = { shFormat: packedSH.format, count: n, bases: model.bases, degree: Math.sqrt(model.bases) - 1, renderMethod: model.renderMethod, filterMode: model.filterMode };
+    this.lastUploadStats = profiling ? {
+      validation_ms: validated - start, sh_prepare_ms: prepared - validated,
+      gpu_upload_ms: performance.now() - prepared, total_ms: performance.now() - start,
+      shTemporaryBytes: packedSH.data && packedSH.data !== model.sh && packedSH.data !== model.shDC ? packedSH.data.byteLength : 0,
+    } : null;
   }
 
   _resize(width, height) {

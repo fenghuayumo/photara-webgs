@@ -174,7 +174,7 @@ const model = await parseSog(buffer);
 16-bit SH palette labels 和 `antialiased` 的 mip2d。按 Studio 导入约定将 SOG 的 RUB 坐标转换为 Photara RDF，旋转与 SH 同步转换。
 原始 RGBA 解码禁用颜色转换和 alpha 预乘，避免低透明度像素的数据损坏。
 解码在 module worker 内执行，依赖 OffscreenCanvas WebGL2 的原始像素读取；
-模型显示仍使用 WebGPU。SOG 压缩减少下载体积，展开后 GPU 数据量不变。
+模型显示仍使用 WebGPU。SOG 压缩减少下载体积，查看器使用紧凑 CPU SH 与 GPU 调色板。
 不支持旧 SOG v1、v3、Streamed SOG/LOD、ZIP64、加密 ZIP 和 2DGS。
 
 标准 SOG 不记录 Photara 的 `3dgut` 方法，默认使用 `3dgs`；对于已知的
@@ -221,6 +221,33 @@ console.log(renderer.getMemoryUsage()); // 应用 buffer/texture 请求字节数
 `model.sh` 仍是 canonical Float32 数组。存在调色板时会核对高阶项，修改后不能精确还原
 则自动回退普通 Float32；没有调色板的 PLY 也获得投影结构的内存节省。
 本轮仍未同步 TEZOI。
+
+## 2026-11-02：SOG 紧凑 CPU 加载
+
+查看器现在默认直接保留 DC、标签与 Float32 调色板，不完整展开高阶 SH；
+Worker 按紧凑形式转移，上传直接写 GPU 映射区，省掉 CPU 拼接数组。
+完整 300 万点场景模型数组由 743.8 MB 降至 203.8 MB（减少 72.6%），
+另省去 59.8 MB 上传临时数组。GPU 占用和图像精度保持不变。
+同版本交替对照的本地加载约 6.3–6.9 → 3.5–3.9 秒；
+采样方法、阶段计时及边界见 [加载内存报告](docs/1023-sog-loading.md)。
+
+```js
+await element.load('./scene.sog'); // 查看器默认 packed，PLY 不受影响
+await element.load('./scene.sog', { shLayout: 'canonical' }); // 显式兼容路径
+// 直接解析 API 与 ModelLoader 默认仍返回原有完整 model.sh：
+const canonical = await parseSog(buffer);
+const packed = await parseSog(anotherBuffer, { shLayout: 'packed' });
+// packed.sh 不存在；可编辑 shDC、shPalette.labels、shPalette.coefficients。
+await renderer.setModel(packed); // 不隐式展开
+import { toCanonicalModel } from './src/index.js';
+const editable = toCanonicalModel(packed); // 显式分配完整 Float32 SH
+editable.sh[4] += 0.1;
+await renderer.setModel(editable); // 仍核对 canonical SH 编辑，必要时回退 Float32
+```
+
+诊断时可使用 `parseSog(buffer,{profile:true})` / `ModelLoader.parse(buffer,{profile:true})`
+获取 `model.loadStats`，以及 `setModel(model,{profiling:true})` 的 `renderer.lastUploadStats`。
+这些字节统计与 V8 采样均不能代替整进程内存测量；图片解码与 GPU 驱动仍有额外分配。
 
 ## 查看器相机控制与双击聚焦
 

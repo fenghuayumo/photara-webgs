@@ -116,7 +116,7 @@ export class GaussianViewer {
     } finally { if (generation === this.generation) this.stage.setAttribute('aria-busy', 'false'); }
   }
   /** File/Blob, URL string or ArrayBuffer; parsing happens in a module worker. */
-  load(source, { name, maxSplats, maxBytes = 1024 * 1024 * 1024 } = {}) {
+  load(source, { name, maxSplats, maxBytes = 1024 * 1024 * 1024, shLayout = 'packed' } = {}) {
     return this._replace(async signal => {
       let buffer, baseUrl;
       if (source instanceof ArrayBuffer) buffer = source;
@@ -145,7 +145,7 @@ export class GaussianViewer {
       }
       if (signal.aborted) throw new DOMException('Load cancelled', 'AbortError');
       if (buffer.byteLength > maxBytes) throw new Error('模型文件超过加载大小限制。');
-      return this.loader.parse(buffer, { name, baseUrl, maxBytes, ...(maxSplats === undefined ? {} : { maxSplats }) });
+      return this.loader.parse(buffer, { name, baseUrl, maxBytes, shLayout, ...(maxSplats === undefined ? {} : { maxSplats }) });
     });
   }
   loadDemo(options) { return this._replace(async () => createDemoModel(options)); }
