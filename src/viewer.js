@@ -21,19 +21,21 @@ const template = `
       <div class="mode-switch" role="group" aria-label="相机模式"><button type="button" data-mode="orbit" aria-pressed="true">转台</button><button type="button" data-mode="fly" aria-pressed="false">自由漫游</button></div>
       <label class="fly-speed" hidden>移动速度 <select data-speed aria-label="漫游移动速度"><option value="0.25">慢速 · 0.25×</option><option value="1" selected>标准 · 1×</option><option value="4">快速 · 4×</option></select></label>
       <span class="navigation-key">V 切换模式</span>
+      <label class="render-quality">渲染 <select data-quality aria-label="渲染质量模式"><option value="sorted">完整画质</option><option value="movement">交互加速（移动时有噪点）</option></select></label>
+      <span class="navigation-key" data-render-state aria-live="polite">完整画质</span>
     </div>
     <div class="footer"><span data-help>拖动旋转 · 滚轮缩放 · 右键平移 · 双击聚焦</span><span data-detail>文件在本机解析，不会上传。</span></div>
   </div>`;
 
 /** Framework-independent mount; styles are scoped by a shadow root in the element. */
 export class GaussianViewer {
-  constructor(root, { pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2), controlMode = 'orbit', onLoad, onError, onReady } = {}) {
+  constructor(root, { pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2), controlMode = 'orbit', renderingMode = 'sorted', onLoad, onError, onReady } = {}) {
     this.root = root; this.options = { pixelRatio, onLoad, onError, onReady };
     this.abort = new AbortController(); this.loader = new PlyLoader(); this.generation = 0; this.uploadQueue = Promise.resolve();
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./viewer.css', import.meta.url).href;
     root.replaceChildren(link); const container = document.createElement('div'); container.innerHTML = template; root.append(container);
     this.canvas = root.querySelector('canvas'); this.stage = root.querySelector('.stage'); this.message = root.querySelector('.message');
-    this.controls = new OrbitControls(this.canvas, () => this.invalidate(), () => this._updateNavigation());
+    this.controls = new OrbitControls(this.canvas, () => this._controlsChanged(), () => this._updateNavigation());
     const listen = (element, type, fn, options = {}) => element.addEventListener(type, fn, { ...options, signal: this.abort.signal });
     const file = root.querySelector('[data-file]');
     listen(root.querySelector('[data-open]'), 'click', () => file.click());
@@ -42,6 +44,7 @@ export class GaussianViewer {
     listen(root.querySelector('[data-reset]'), 'click', () => this.resetCamera());
     root.querySelectorAll('[data-mode]').forEach(button => listen(button, 'click', () => { this.setControlMode(button.dataset.mode); this.canvas.focus({ preventScroll: true }); }));
     listen(root.querySelector('[data-speed]'), 'change', e => { this.controls.setSpeed(Number(e.target.value)); this.canvas.focus({ preventScroll: true }); });
+    listen(root.querySelector('[data-quality]'), 'change', e => this.setRenderingMode(e.target.value));
     listen(this.canvas, 'dblclick', e => {
       if (e.button !== 0 || !this.controls.enabled || !this.modelInfo) return;
       e.preventDefault();
@@ -57,6 +60,19 @@ export class GaussianViewer {
     this.intersection.observe(this.stage);
     this.resize = new ResizeObserver(() => this.invalidate()); this.resize.observe(this.stage);
     this.setControlMode(controlMode);
+    this.setRenderingMode(renderingMode);
+  }
+  setRenderingMode(mode) {
+    if (!['sorted', 'movement'].includes(mode)) throw new Error('Unknown viewer rendering mode');
+    this.renderingMode = mode; this.motionUntil = 0;
+    this.root.querySelector('[data-quality]').value = mode;
+    clearTimeout(this.settleTimer); this.invalidate();
+  }
+  _controlsChanged() {
+    this.motionUntil = performance.now() + 120;
+    clearTimeout(this.settleTimer);
+    if (this.renderingMode === 'movement') this.settleTimer = setTimeout(() => this.invalidate(), 130);
+    this.invalidate();
   }
   _updateNavigation() {
     const fly = this.controls.mode === 'fly', enabled = this.controls.enabled;
@@ -177,7 +193,12 @@ export class GaussianViewer {
       const box = this.stage.getBoundingClientRect(); if (box.width < 1 || box.height < 1) return;
       const active = this.controls.update(time);
       const camera = this.calibratedCamera || this.controls.camera(Math.max(1, Math.round(box.width * this.options.pixelRatio)), Math.max(1, Math.round(box.height * this.options.pixelRatio)));
-      try { this.renderer.render(camera); } catch (error) { this._error(error); }
+      const transparency = this.renderingMode === 'movement' && !this.calibratedCamera && (active || time < this.motionUntil) ? 'stochastic' : 'sorted';
+      try {
+        this.renderer.render(camera, { transparency });
+        const state = this.root.querySelector('[data-render-state]'), text = transparency === 'stochastic' ? '随机预览 · 停止后恢复画质' : '完整画质';
+        if (state.textContent !== text) state.textContent = text;
+      } catch (error) { this._error(error); }
       if (active) this.invalidate();
     });
   }
@@ -185,6 +206,7 @@ export class GaussianViewer {
     if (this.disposed) return;
     this.disposed = true; ++this.generation;
     cancelAnimationFrame(this.frame); this.fetchAbort?.abort(); this.loader.dispose();
+    clearTimeout(this.settleTimer);
     this.abort.abort(); this.resize.disconnect(); this.intersection.disconnect(); this.controls.dispose(); this.renderer?.dispose();
   }
 }

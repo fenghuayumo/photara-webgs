@@ -31,6 +31,23 @@ try {
     await page.locator('photara-viewer').locator('[data-demo]').click();
     await page.waitForFunction(() => document.querySelector('photara-viewer').viewer?.renderer?.frameCount > 0);
     const canvas = page.locator('photara-viewer').locator('canvas');
+    const quality = page.locator('photara-viewer').locator('[data-quality]');
+    await quality.selectOption('movement');
+    await canvas.focus(); await page.keyboard.down('w');
+    await page.waitForFunction(()=>document.querySelector('photara-viewer').viewer.renderer.lastTransparency==='stochastic');
+    await page.keyboard.up('w');
+    await page.waitForFunction(()=>{
+      const v=document.querySelector('photara-viewer').viewer;
+      return performance.now()>v.motionUntil&&!v.frame&&v.renderer.lastTransparency==='sorted';
+    });
+    await canvas.press('r');
+    await page.waitForFunction(()=>{
+      const v=document.querySelector('photara-viewer').viewer;
+      return performance.now()>v.motionUntil&&!v.frame&&v.renderer.lastTransparency==='sorted';
+    });
+    // Keep interaction acceleration enabled through all following orbit, fly,
+    // focus, calibrated-camera and capture checks.
+    result.ui.push('Opt-in movement rendering and exact restore after key release/reset');
     const before = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);
     await canvas.focus(); await page.keyboard.press('Shift+ArrowRight');
     const after = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);
@@ -141,6 +158,7 @@ try {
     result.ui.push('Orbit/fly UI and V toggle, WASD hold/release, free look, speed, double-click returns to orbit');
     await page.locator('#camera').setInputFiles(fileURLToPath(new URL('../examples/camera.json', import.meta.url)));
     await page.waitForFunction(() => document.querySelector('photara-viewer').viewer.calibratedCamera?.width === 1280);
+    if(await page.evaluate(()=>document.querySelector('photara-viewer').viewer.renderer.lastTransparency!=='sorted'))throw new Error('Calibrated view used stochastic rendering');
     if(!await page.locator('photara-viewer').locator('[data-mode="fly"]').isDisabled())throw new Error('Calibrated camera allowed navigation');
     const download = page.waitForEvent('download'); await page.locator('#capture').click();
     if ((await download).suggestedFilename() !== 'photara-webgs.png') throw new Error('Screenshot download failed');
@@ -150,6 +168,10 @@ try {
     await page.screenshot({ path: fileURLToPath(new URL('../test-results/desktop.png', import.meta.url)), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('photara-viewer').locator('[data-mode="fly"]').click();
+    await page.waitForFunction(()=>{
+      const v=document.querySelector('photara-viewer').viewer;
+      return performance.now()>v.motionUntil&&!v.frame&&v.renderer.lastTransparency==='sorted';
+    });
     await page.screenshot({ path: fileURLToPath(new URL('../test-results/mobile.png', import.meta.url)), fullPage: true });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     if (overflow) throw new Error('Mobile viewport overflow');

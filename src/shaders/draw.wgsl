@@ -6,7 +6,7 @@ struct VertexOut {
     @location(0) @interpolate(flat) id: u32,
     @location(1) @interpolate(flat) seamShift: f32,
 };
-@vertex fn vertexMain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> VertexOut {
+fn vertexQuad(vertex: u32, instance: u32) -> VertexOut {
     var out: VertexOut;
     let seamCopies = cam.lens.x==3u;
     let index = select(instance,instance/3u,seamCopies);
@@ -25,12 +25,17 @@ struct VertexOut {
     out.position = vec4f(ndc.x,-ndc.y,0.5,1);
     return out;
 }
-@fragment fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
+@vertex fn vertexMain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> VertexOut {
+    return vertexQuad(vertex,instance);
+}
+// Shared response keeps the sorted and stochastic alpha evaluation identical.
+fn gaussianResponse(input: VertexOut) -> vec2f {
     let p = projected[input.id];
     // Photara CUDA/Vulkan samples integer pixel coordinates. WebGPU fragment
     // positions are half-integers, so floor here deliberately removes 0.5.
     let pixel = floor(input.position.xy);
     var distance = 0.0;
+    var depth = p.row0.y;
     if (cam.config.z==1u) {
         if (cam.lens.x==3u) {
             let dx = pixel.x-p.centerConic.x-input.seamShift;
@@ -51,6 +56,7 @@ struct VertexOut {
         if (!(dd>0.0) || !(peak>0.0)) { discard; }
         let closest = origin+peak*d;
         distance = dot(closest,closest);
+        depth = select(peak,peak*ray.z,cam.lens.x==0u);
     } else {
         var delta = pixel-p.centerConic.xy;
         if (cam.lens.x==3u) {
@@ -63,5 +69,10 @@ struct VertexOut {
     }
     let alpha = min(0.99,p.color.w*exp(-0.5*distance));
     if (alpha<ALPHA_FLOOR) { discard; }
+    return vec2f(alpha,depth);
+}
+@fragment fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
+    let p = projected[input.id];
+    let alpha = gaussianResponse(input).x;
     return vec4f(p.color.xyz*alpha,alpha);
 }

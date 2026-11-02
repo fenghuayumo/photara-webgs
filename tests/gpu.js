@@ -235,6 +235,67 @@ try{
     r.render(cam);const batched=await r.pick(31,26);
     assert(batched&&Math.abs(batched[2]-2)<1e-4,'Picking did not traverse workgroup batches');
   });
+  await test('Stochastic depth, deterministic seeds, skipped sort and exact capture across cameras',async()=>{
+    for(const method of ['3dgs','3dgut'])for(const mode of ['pinhole','orthographic','fisheye','equirectangular'])for(const compact of [true,false]) {
+      const c={...cam,model:mode};
+      if(mode==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
+      const m=model([{p:[0,0,2],s:[.3,.3,.3],alpha:.99,color:[1,0,0]},{p:[0,0,3],s:[.3,.3,.3],alpha:.99,color:[0,1,0]}],method);
+      await r.setModel(m);r.render(c,{compact,background:[0,0,0]});const exact=await r.readPixels();
+      r.render(c,{compact,background:[0,0,0],transparency:'stochastic',stochasticSeed:7});
+      assert(!r.state.keysSorted,'Stochastic render sorted its keys');
+      const timing=await r.readTimings();if(timing)assert(timing.sort_ms===0,'Skipped sort returned stale timestamps');
+      const first=await r.readPixels({exact:false});
+      r.render(c,{compact,background:[0,0,0],transparency:'stochastic',stochasticSeed:7});
+      const same=await r.readPixels({exact:false});assert(same.every((v,i)=>v===first[i]),'Fixed seed is not deterministic');
+      const i=(Math.floor(c.cy)*c.width+Math.floor(c.cx))*4;
+      assert(first[i]>250&&first[i+1]<2,`${method}/${mode} nearest opaque depth failed: ${first.slice(i,i+4)}`);
+      const restored=await r.readPixels();assert(r.lastTransparency==='sorted','Capture did not force sorted');
+      assert(restored.every((v,i)=>v===exact[i]),'Stochastic round trip changed exact output');
+      if(mode==='fisheye'||mode==='equirectangular'){m.data[3]=0;m.data[15]=0;await r.setModel(m);}
+      r.render({...c,near:100},{compact,background:[0,0,0],transparency:'stochastic'});
+      const empty=await r.readPixels({exact:false});assert(empty.every((v,i)=>i%4===3||v===0),`${method}/${mode} empty stochastic frame retained depth/color`);
+    }
+    for(const options of [{transparency:'invalid'},{stochasticSeed:NaN}]){
+      let rejected=false;try{r.render(cam,options);}catch{rejected=true;}assert(rejected,'Invalid stochastic option accepted');
+    }
+  });
+  await test('Stochastic alpha statistics, noise variation and deterministic picking',async()=>{
+    const c={...cam,width:32,height:32,fx:30,fy:30,cx:16,cy:16};
+    await r.setModel(model([{p:[0,0,2],s:[.5,.5,.5],alpha:.5,color:[1,0,0]},{p:[0,0,3],s:[.5,.5,.5],alpha:.5,color:[0,1,0]}]));
+    let red=0,green=0,samples=0,changed=0,previous;
+    for(let seed=0;seed<64;seed++){
+      r.render(c,{background:[0,0,0],transparency:'stochastic',stochasticSeed:seed});const pixels=await r.readPixels({exact:false});
+      for(let y=12;y<=20;y++)for(let x=12;x<=20;x++) {const i=(y*c.width+x)*4;red+=pixels[i]/255;green+=pixels[i+1]/255;samples++;}
+      if(previous)changed+=pixels.some((v,i)=>v!==previous[i]);previous=pixels;
+    }
+    r.render(c,{background:[0,0,0]});const sorted=await r.readPixels();let er=0,eg=0;
+    for(let y=12;y<=20;y++)for(let x=12;x<=20;x++){const i=(y*c.width+x)*4;er+=sorted[i]/255;eg+=sorted[i+1]/255;}
+    assert(Math.abs(red/samples-er/81)<.03&&Math.abs(green/samples-eg/81)<.03,'Stochastic coverage is biased or correlated');
+    assert(changed>60,'Sample seed did not vary noise');
+    const point=await r.pick(16,16);
+    r.render(c,{transparency:'stochastic'});const stochasticPick=await r.pick(16,16);
+    assert(stochasticPick&&point.every((v,i)=>Math.abs(v-stochasticPick[i])<1e-5),'Stochastic pick used unsorted keys');
+    const memory=r.getMemoryUsage();assert(memory.textures>=32*32*12,'Depth texture missing from accounting');
+  });
+  await test('Stochastic panorama seams, GUT poles, lens bounds and snapshot capture',async()=>{
+    for(const method of ['3dgs','3dgut']) {
+      const c={...cam,width:96,height:48,model:'equirectangular',fx:96/(2*Math.PI),fy:48/Math.PI,cx:48,cy:24};
+      await r.setModel(model([{p:[.01,0,-2],s:[.3,.3,.3],alpha:.99,color:[1,0,0]}],method));
+      r.render(c,{transparency:'stochastic',stochasticSeed:8,background:[0,0,0]});const pixels=await r.readPixels({exact:false});
+      for(const x of [0,95])assert(pixels[(24*96+x)*4]>250,`${method} panorama seam clipped`);
+    }
+    const c={...cam,width:96,height:48,model:'equirectangular',fx:96/(2*Math.PI),fy:48/Math.PI,cx:48,cy:24};
+    await r.setModel(model([{p:[0,-2,0],s:[.3,.3,.3],alpha:.99,color:[1,0,0]}],'3dgut'));
+    r.render(c,{transparency:'stochastic',stochasticSeed:8,background:[0,0,0]});
+    const pole=await r.readPixels({exact:false});assert(pole.some((v,i)=>i%4===0&&v>250),'Stochastic GUT pole disappeared');
+    const fish={...cam,width:96,height:64,model:'fisheye',fx:20,fy:20,cx:48,cy:32,distortion:[0,0,0,0],worldToCamera:lookAtCV([.2,-.1,-1],[0,0,2])};
+    await r.setModel(model(scene,'3dgut'));r.render(fish,{background:[.1,.2,.3]});const exact=await r.readPixels();
+    r.render(fish,{transparency:'stochastic',background:[.1,.2,.3]});const raw=await r.readPixels({exact:false});
+    const i=(32*96+95)*4;assert(Math.abs(raw[i]-26)<=1,'Out-of-lens stochastic ray hit geometry');
+    // Caller edits must not change the camera used for exact capture.
+    fish.distortion[0]=.2;fish.worldToCamera[12]+=2;
+    const restored=await r.readPixels();assert(restored.every((v,i)=>v===exact[i]),'Capture camera snapshot was mutated by caller');
+  });
   await test('Near clipping and resize/readback row padding',async()=>{
     await r.setModel(model(scene));r.render({...cam,near:10,width:67,height:41},{background:[.1,.2,.3]});const p=await r.readPixels();
     assert(p.length===67*41*4,'Readback dimensions');assert(Math.abs(p[0]-26)<=1&&Math.abs(p.at(-2)-77)<=1,'Clipped frame/background');

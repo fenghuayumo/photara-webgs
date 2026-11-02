@@ -215,6 +215,8 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
         out.bounds = vec4f(p.pixel-e,p.pixel+e);
         out.centerConic = vec4f(p.pixel,cov.z/det,-cov.y/det);
         out.row0.x = cov.x/det;
+        // Spare GS lane: positive center depth for unsorted depth testing.
+        out.row0.y = select(t.z,length(t),cam.lens.x==3u);
     }
     if (out.bounds.w < 0.0 || out.bounds.y > cam.viewport.y) { return; }
     if (cam.lens.x != 3u && (out.bounds.z < 0.0 || out.bounds.x > cam.viewport.x)) { return; }

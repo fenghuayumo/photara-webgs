@@ -27,5 +27,6 @@ export class PhotaraViewerElement extends HTMLElement {
   setCamera(camera) { this.viewer.setCamera(camera); }
   resetCamera() { this.viewer.resetCamera(); }
   setControlMode(mode) { this.viewer.setControlMode(mode); }
+  setRenderingMode(mode) { this.viewer.setRenderingMode(mode); }
 }
 if (!customElements.get('photara-viewer')) customElements.define('photara-viewer', PhotaraViewerElement);

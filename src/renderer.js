@@ -39,7 +39,7 @@ export class GaussianRenderer {
     if (!this.context) throw new Error('Canvas 无法创建 WebGPU 上下文。');
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
-    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick'];
+    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick', 'stochastic'];
     const sources = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`./shaders/${name}.wgsl`, import.meta.url));
       if (!response.ok) throw new Error(`Shader ${name}: HTTP ${response.status}`);
@@ -52,13 +52,15 @@ export class GaussianRenderer {
       if (errors.length) throw new Error(`${label}: ${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
       return shader;
     };
-    const [projection, draw, radix, blit, rays, compactShader, pickShader] = await Promise.all([
+    const [projection, draw, radix, blit, rays, compactShader, pickShader, stochasticShader] = await Promise.all([
       module('Photara projection', sources[0] + sources[1]),
       module('Photara draw', sources[0] + sources[2]),
       module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]), module('Visible compaction', sources[0] + sources[5]),
       module('Focus picking', sources[0] + sources[6]),
+      module('Stochastic alpha', sources[0] + sources[2] + sources[7]),
     ]);
     this.uniform = device.createBuffer({ label: 'CV camera', size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.stochasticUniform = device.createBuffer({ label: 'Stochastic sample seed', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     if (this.profiling) {
       this.timestampQueries = device.createQuerySet({ type: 'timestamp', count: 10 });
       this.timestampBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
@@ -86,6 +88,16 @@ export class GaussianRenderer {
           color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
           alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
         } }] }, primitive: { topology: 'triangle-list' },
+      });
+      this.stochasticPipeline = await device.createRenderPipelineAsync({
+        layout: 'auto', vertex: { module: stochasticShader, entryPoint: 'vertexMain' },
+        fragment: { module: stochasticShader, entryPoint: 'stochasticMain', targets: [{ format: 'rgba16float' }] },
+        primitive: { topology: 'triangle-list' }, depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
+      });
+      this.stochasticGSPipeline = await device.createRenderPipelineAsync({
+        layout: 'auto', vertex: { module: stochasticShader, entryPoint: 'stochasticGSVertex' },
+        fragment: { module: stochasticShader, entryPoint: 'stochasticGSMain', targets: [{ format: 'rgba16float' }] },
+        primitive: { topology: 'triangle-list' }, depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
       });
       const present = format => device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: blit, entryPoint: 'vs' }, fragment: { module: blit, entryPoint: 'fs', targets: [{ format }] } });
       [this.presentPipeline, this.capturePipeline] = await Promise.all([present(this.format), present('rgba8unorm')]);
@@ -148,6 +160,7 @@ export class GaussianRenderer {
     this.resources.forEach(b => b.destroy());
     this.resources = buffers; this.state = state;
     this.hasRenderedModel = false;
+    this.lastFrame = null;
     // Retain only metadata on the renderer; the viewer may release CPU arrays.
     this.model = { shFormat: packedSH.format, count: n, bases: model.bases, degree: Math.sqrt(model.bases) - 1, renderMethod: model.renderMethod, filterMode: model.filterMode };
     this.lastUploadStats = profiling ? {
@@ -161,10 +174,11 @@ export class GaussianRenderer {
     if (width > this.device.limits.maxTextureDimension2D || height > this.device.limits.maxTextureDimension2D) throw new Error('Viewport exceeds GPU texture limits');
     if (this.width === width && this.height === height) return;
     this.texture?.destroy(); this.captureTexture?.destroy(); this.captureTexture = null;
+    this.depthTexture?.destroy(); this.depthTexture = null;
     this.rayKey = null;
     this.width = this.canvas.width = width; this.height = this.canvas.height = height;
     this.texture = this.device.createTexture({ label: 'Linear numeric Gaussian accumulation', size: [width, height], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    if (this.state) this.state.drawGroup = null;
+    if (this.state) { this.state.drawGroup = null; this.state.stochasticGroup = null; }
     this.presentGroup = this.device.createBindGroup({ layout: this.presentPipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: this.texture.createView() }] });
   }
 
@@ -176,24 +190,34 @@ export class GaussianRenderer {
     this.rayGroup = this.device.createBindGroup({ layout: this.rayPipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: this.rayTexture.createView() },
     ] });
-    if (this.state) this.state.drawGroup = null;
+    if (this.state) { this.state.drawGroup = null; this.state.stochasticGroup = null; }
   }
 
-  render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1, tightBounds = true, compact = true } = {}) {
+  render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1, tightBounds = true, compact = true, transparency = 'sorted', stochasticSeed = this.frameCount >>> 0 } = {}) {
     this._check();
     if (!this.model) throw new Error('Load a model before rendering');
     validateCamera(camera);
     if (!RENDER_METHODS.includes(renderMethod) || !FILTER_MODES.includes(filterMode)) throw new Error('Unknown rendering configuration');
+    if (!['sorted', 'stochastic'].includes(transparency) || !Number.isInteger(stochasticSeed) || stochasticSeed < 0 || stochasticSeed > 0xffffffff) throw new Error('Invalid transparency mode or stochastic seed');
     if (!Number.isFinite(scaleModifier) || scaleModifier <= 0 || background.length !== 3 || !background.every(v => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error('Invalid render options');
     const { width, height } = camera;
     this._resize(width, height);
+    const stochastic = transparency === 'stochastic';
+    const stochasticPipeline = renderMethod === '3dgs' ? this.stochasticGSPipeline : this.stochasticPipeline;
+    if (stochastic && !this.depthTexture) this.depthTexture = this.device.createTexture({ label: 'Stochastic reversed depth', size: [width, height], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT });
     const nonlinearGut = renderMethod === '3dgut' && CAMERA_MODELS[camera.model] >= 2;
     if (nonlinearGut) this._ensureRays(width, height);
     else if (!this.rayTexture) this._ensureRays(1, 1);
-    if (this.state.drawCompact !== compact) { this.state.drawGroup = null; this.state.drawCompact = compact; }
+    if (this.state.drawCompact !== compact) { this.state.drawGroup = null; this.state.stochasticGroup = null; this.state.drawCompact = compact; }
     if (!this.state.drawGroup) this.state.drawGroup = this.device.createBindGroup({ layout: this.drawPipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.state.projected } },
       { binding: 2, resource: { buffer: this.state.keys[compact ? 1 : 0] } }, { binding: 3, resource: this.rayTexture.createView() },
+    ] });
+    if (this.state.stochasticMethod !== renderMethod) { this.state.stochasticGroup = null; this.state.stochasticMethod = renderMethod; }
+    if (stochastic && !this.state.stochasticGroup) this.state.stochasticGroup = this.device.createBindGroup({ layout: stochasticPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.state.projected } },
+      { binding: 2, resource: { buffer: this.state.keys[compact ? 1 : 0] } }, { binding: 3, resource: this.rayTexture.createView() },
+      { binding: 4, resource: { buffer: this.stochasticUniform } },
     ] });
     const bytes = new ArrayBuffer(160), f = new Float32Array(bytes), u = new Uint32Array(bytes);
     f.set(camera.worldToCamera, 0); f.set(camera.position || cameraPosition(camera.worldToCamera), 16);
@@ -203,6 +227,7 @@ export class GaussianRenderer {
     u.set([CAMERA_MODELS[camera.model ?? 'pinhole'], this.model.degree, tightBounds ? 1 : 0, this.model.shFormat === 'palette' ? 1 : 0], 32);
     f.set(camera.distortion || [0, 0, 0, 0], 36);
     this.device.queue.writeBuffer(this.uniform, 0, bytes);
+    if (stochastic) this.device.queue.writeBuffer(this.stochasticUniform, 0, new Uint32Array([stochasticSeed, 0, 0, 0]));
     if (!compact) this.device.queue.writeBuffer(this.state.sortParams, 0, this.state.params);
     this.lastCompact = compact;
     const encoder = this.device.createCommandEncoder({ label: 'Photara Gaussian frame' });
@@ -223,16 +248,12 @@ export class GaussianRenderer {
       pass.setPipeline(this.compactPipelines[stage]); pass.setBindGroup(0, this.state.compactGroup);
       pass.dispatchWorkgroups(stage === 1 ? 1 : this.state.groups); pass.end();
     }
-    // Separate passes give explicit storage-write/read synchronization.
-    for (let i = 0; i < 8; i++) for (let stage = 0; stage < 3; stage++) {
-      pass = encoder.beginComputePass(timestamps(i === 0 && stage === 0 ? 4 : undefined, i === 7 && stage === 2 ? 5 : undefined));
-      pass.setPipeline(this.sortPipelines[stage]); pass.setBindGroup(0, this.state.sortGroups[compact ? 1 - i % 2 : i % 2], [i * 256]);
-      if (stage !== 1 && compact) pass.dispatchWorkgroupsIndirect(this.state.indirect, 16);
-      else pass.dispatchWorkgroups(stage === 1 ? 16 : this.state.groups);
-      pass.end();
-    }
-    pass = encoder.beginRenderPass({ ...timestamps(6, 7), colorAttachments: [{ view: this.texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [...background, 1] }] });
-    pass.setPipeline(this.drawPipeline); pass.setBindGroup(0, this.state.drawGroup);
+    if (!stochastic) this._encodeSort(encoder, compact, timestamps);
+    this.state.keysSorted = !stochastic;
+    pass = encoder.beginRenderPass({ ...timestamps(6, 7), colorAttachments: [{ view: this.texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [...background, 1] }],
+      ...(stochastic ? { depthStencilAttachment: { view: this.depthTexture.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' } } : {}),
+    });
+    pass.setPipeline(stochastic ? stochasticPipeline : this.drawPipeline); pass.setBindGroup(0, stochastic ? this.state.stochasticGroup : this.state.drawGroup);
     const seamCopies = camera.model === 'equirectangular' ? 3 : 1;
     if (compact) pass.drawIndirect(this.state.indirect, 0);
     else pass.draw(6, this.model.count * seamCopies);
@@ -240,6 +261,19 @@ export class GaussianRenderer {
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, this.presentGroup);
     if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 10, this.timestampBuffer, 0);
     this.device.queue.submit([encoder.finish()]); this.frameCount++; this.hasRenderedModel = true;
+    this.lastTransparency = transparency;
+    this.lastFrame = stochastic ? { camera: { ...camera, worldToCamera: Array.from(camera.worldToCamera), ...(camera.position ? { position: [...camera.position] } : {}), ...(camera.distortion ? { distortion: [...camera.distortion] } : {}) }, options: { renderMethod, filterMode, background: [...background], scaleModifier, tightBounds, compact } } : null;
+  }
+
+  _encodeSort(encoder, compact, timestamps = () => ({})) {
+    // Separate passes give explicit storage-write/read synchronization.
+    for (let i = 0; i < 8; i++) for (let stage = 0; stage < 3; stage++) {
+      const pass = encoder.beginComputePass(timestamps(i === 0 && stage === 0 ? 4 : undefined, i === 7 && stage === 2 ? 5 : undefined));
+      pass.setPipeline(this.sortPipelines[stage]); pass.setBindGroup(0, this.state.sortGroups[compact ? 1 - i % 2 : i % 2], [i * 256]);
+      if (stage !== 1 && compact) pass.dispatchWorkgroupsIndirect(this.state.indirect, 16);
+      else pass.dispatchWorkgroups(stage === 1 ? 16 : this.state.groups);
+      pass.end();
+    }
   }
 
   /** Pick a world-space focus point from the last frame, in canvas pixels.
@@ -260,6 +294,9 @@ export class GaussianRenderer {
         [this.uniform, this.state.projected, this.state.keys[this.lastCompact ? 1 : 0], this.state.attributes, this.state.indirect, request, result]
           .map((buffer, binding) => ({ binding, resource: { buffer } })) });
       const encoder = d.createCommandEncoder({ label: 'Double-click focus' });
+      // Stochastic drawing never sorts. Explicit picking still uses the same
+      // deterministic opacity scan, so prepare its keys only when requested.
+      if (!this.state.keysSorted) { this._encodeSort(encoder, this.lastCompact); this.state.keysSorted = true; }
       const pass = encoder.beginComputePass(); pass.setPipeline(this.pickPipeline); pass.setBindGroup(0, group); pass.dispatchWorkgroups(1); pass.end();
       encoder.copyBufferToBuffer(result, 0, output, 0, 16); d.queue.submit([encoder.finish()]);
       await output.mapAsync(GPUMapMode.READ);
@@ -278,7 +315,7 @@ export class GaussianRenderer {
     try {
       await output.mapAsync(GPUMapMode.READ); const t = new BigUint64Array(output.getMappedRange());
       const ms = i => Number(t[i + 1] - t[i]) / 1e6;
-      return { compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: ms(4), draw_ms: ms(6) };
+      return { compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6) };
     } finally { output.destroy(); }
   }
 
@@ -286,9 +323,9 @@ export class GaussianRenderer {
   getMemoryUsage() {
     this._check();
     const modelBuffers = this.resources.reduce((sum, buffer) => sum + buffer.size, 0);
-    const controlBuffers = (this.uniform?.size || 0) + (this.timestampBuffer?.size || 0);
+    const controlBuffers = (this.uniform?.size || 0) + (this.stochasticUniform?.size || 0) + (this.timestampBuffer?.size || 0);
     const textures = (this.texture ? this.width * this.height * 8 : 0) +
-      (this.captureTexture ? this.width * this.height * 4 : 0) + (this.rayTexture ? this.rayWidth * this.rayHeight * 16 : 0);
+      (this.captureTexture ? this.width * this.height * 4 : 0) + (this.rayTexture ? this.rayWidth * this.rayHeight * 16 : 0) + (this.depthTexture ? this.width * this.height * 4 : 0);
     return { ...this.state?.memory, modelBuffers, controlBuffers, textures, total: modelBuffers + controlBuffers + textures, shFormat: this.model?.shFormat };
   }
 
@@ -309,9 +346,10 @@ export class GaussianRenderer {
   }
 
   /** Explicit readback for screenshots/parity tests; never used in the frame loop. */
-  async readPixels() {
+  async readPixels({ exact = true } = {}) {
     this._check();
     if (!this.texture) throw new Error('Render a frame first');
+    if (exact && this.lastTransparency === 'stochastic') this.render(this.lastFrame.camera, this.lastFrame.options);
     const { width, height } = this;
     if (!this.captureTexture) this.captureTexture = this.device.createTexture({ size: [width, height], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
     const bytesPerRow = Math.ceil(width * 4 / 256) * 256;
@@ -333,6 +371,7 @@ export class GaussianRenderer {
     if (this.disposed) return;
     this.disposed = true; this.resources.forEach(b => b.destroy()); this.resources = [];
     this.uniform?.destroy(); this.texture?.destroy(); this.captureTexture?.destroy(); this.rayTexture?.destroy();
+    this.stochasticUniform?.destroy(); this.depthTexture?.destroy();
     this.timestampQueries?.destroy(); this.timestampBuffer?.destroy();
     this.context?.unconfigure(); this.device.destroy(); this.model = null;
   }
