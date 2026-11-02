@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parsePly } from '../src/ply.js';
 import { activateGaussian, createDemoModel, validateModel } from '../src/model.js';
 import { lookAtCV, cameraPosition, validateCamera, resizeCamera } from '../src/camera.js';
+import { OrbitControls } from '../src/controls.js';
 
 const names = ['x','y','z','f_dc_0','f_dc_1','f_dc_2','opacity','scale_0','scale_1','scale_2','rot_0','rot_1','rot_2','rot_3'];
 const values = [1,-2,3,.1,.2,.3,0,Math.log(.2),Math.log(.3),Math.log(.4),2,0,0,0];
@@ -80,4 +81,87 @@ test('calibrated camera validation and resolution preserve principal point',()=>
 });
 test('synthetic demo is deterministic and valid',()=>{
   const a=createDemoModel(),b=createDemoModel(); validateModel(a);assert.deepEqual(a.data,b.data);assert.equal(a.count,1764);
+});
+
+test('zoom continues forward past the orbit target and preserves reset',()=>{
+  const canvas = new EventTarget(); canvas.style = {};
+  let changes = 0;
+  const controls = new OrbitControls(canvas, () => changes++);
+  controls.fit({ center: [1, -2, 3], radius: 10 });
+  controls.zoom(controls.minimum * 1.1 / controls.radius);
+  const before = controls.view(), eye = cameraPosition(before);
+  const step = controls.radius * (1 - .8);
+  controls.zoom(.8);
+  const after = cameraPosition(controls.view());
+  after.forEach((v, a) => near(v, eye[a] + before[a * 4 + 2] * step));
+  near(controls.radius, controls.minimum);
+  const target = [...controls.target], atLimit = [...after];
+  controls.zoom(.8);
+  cameraPosition(controls.view()).forEach((v, a) => near(v, atLimit[a] + before[a * 4 + 2] * controls.minimum * .2));
+  assert.ok(controls.target.some((v, a) => v !== target[a]));
+  const movedTarget = [...controls.target];
+  controls.zoom(1.2);
+  assert.deepEqual(controls.target, movedTarget);
+  near(controls.radius, controls.minimum * 1.2);
+  const count = changes;
+  for (const factor of [NaN, Infinity, 0, -1]) controls.zoom(factor);
+  assert.equal(changes, count);
+  controls.reset();
+  assert.deepEqual(controls.target, [1, -2, 3]); near(controls.radius, 27);
+  controls.dispose();
+});
+
+function controlsFixture() {
+  const canvas = new EventTarget(); canvas.style = {};
+  const controls = new OrbitControls(canvas, () => {});
+  controls.fit({center:[1,-2,3],radius:10});
+  return {controls,canvas};
+}
+
+test('focus smoothly recenters without changing heading and returns fly to orbit',()=>{
+  const {controls:c}=controlsFixture(); c.setMode('fly');
+  const yaw=c.yaw,pitch=c.pitch,eye=cameraPosition(c.view()),target=[2,1,4];
+  const initial=[...c.target],radius=Math.hypot(...target.map((v,a)=>v-eye[a]));
+  c.focus(target); assert.equal(c.mode,'orbit'); assert.deepEqual(c.target,initial);
+  assert.equal(c.update(0),true); assert.equal(c.update(125),true);
+  assert.ok(c.target.every((v,a)=>v>initial[a]&&v<target[a]));
+  assert.equal(c.update(250),false); assert.deepEqual(c.target,target); near(c.radius,radius);
+  assert.equal(c.yaw,yaw);assert.equal(c.pitch,pitch);
+  const view=c.view();
+  [0,1].forEach(a=>near(view[a]*target[0]+view[a+4]*target[1]+view[a+8]*target[2]+view[a+12],0));
+  c.reset();assert.deepEqual(c.target,initial);c.dispose();
+});
+
+test('orbit/fly switching preserves pose; fly rotation keeps the eye fixed',()=>{
+  const {controls:c}=controlsFixture(),pose=c.view();
+  c.setMode('fly');assert.deepEqual(c.view(),pose);
+  const eye=cameraPosition(pose);c.orbit(.2,.1);
+  cameraPosition(c.view()).forEach((v,a)=>near(v,eye[a],1e-5));
+  const looked=c.view();c.setMode('orbit');assert.deepEqual(c.view(),looked);
+  c.orbit(.1,0);assert.ok(Math.hypot(...cameraPosition(c.view()).map((v,a)=>v-eye[a]))>1);
+  assert.throws(()=>c.setMode('unknown'),/mode/);c.dispose();
+});
+
+test('fly movement is time based, normalizes diagonals and stops on blur or disable',()=>{
+  const travel=(frames,diagonal=false)=>{
+    const {controls:c,canvas}=controlsFixture();c.setMode('fly');
+    const initial=[...c.target];c.keys.add('KeyW');if(diagonal)c.keys.add('KeyD');
+    c.update(0);for(let i=1;i<=frames;i++)c.update(i*1000/frames);
+    const distance=Math.hypot(...c.target.map((v,a)=>v-initial[a]));
+    canvas.dispatchEvent(new Event('blur'));assert.equal(c.keys.size,0);assert.equal(c.update(2000),false);
+    const stopped=[...c.target];c.keys.add('KeyW');c.enabled=false;c.update(3000);
+    assert.deepEqual(c.target,stopped);assert.equal(c.keys.size,0);c.dispose();return distance;
+  };
+  near(travel(60),5,1e-5);near(travel(120),5,1e-5);near(travel(60,true),5,1e-5);
+});
+
+test('keyboard V toggles mode and movement keys enter fly; fly zoom preserves orbit distance',()=>{
+  const {controls:c,canvas}=controlsFixture();
+  const press=(code,key)=>canvas.dispatchEvent(Object.assign(new Event('keydown',{cancelable:true}),{code,key}));
+  press('KeyV','v');assert.equal(c.mode,'fly');press('KeyV','v');assert.equal(c.mode,'orbit');
+  press('KeyW','w');assert.equal(c.mode,'fly');assert.ok(c.keys.has('KeyW'));
+  const radius=c.radius,target=[...c.target];c.zoom(.5);assert.equal(c.radius,radius);
+  assert.ok(c.target.some((v,a)=>v!==target[a]));
+  c.focus([0,0,0]);c.orbit(.1,0);assert.equal(c.transition,null);
+  c.dispose();
 });

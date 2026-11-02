@@ -7,7 +7,7 @@ import { validateCamera } from './camera.js';
 const template = `
   <div class="viewer">
     <div class="stage" aria-busy="false">
-      <canvas aria-label="Gaussian 三维场景。拖动旋转，滚轮缩放，右键平移；方向键平移，Shift 加方向键旋转，R 重置。"></canvas>
+      <canvas aria-label="Gaussian 三维场景。拖动旋转，滚轮缩放，右键平移，双击聚焦；方向键平移，Shift 加方向键旋转，R 重置。"></canvas>
       <div class="badge"><span class="dot"></span><span data-name>Photara Gaussian Viewer</span></div>
       <div class="empty"><span class="empty-mark" aria-hidden="true">✳</span><h2>从重建，到自由探索。</h2><p>打开 PLY 或 SOG 模型，或先探索合成示例。</p><button type="button" data-demo>探索示例 <span aria-hidden="true">↗</span></button></div>
       <div class="message" role="status" aria-live="polite" hidden></div>
@@ -17,32 +17,59 @@ const template = `
       <div class="actions"><button class="primary" type="button" data-open>打开 PLY / SOG <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog" data-file hidden><button type="button" data-example>合成示例</button></div>
       <div class="metadata" aria-label="模型信息"><span data-count>尚未加载模型</span><span data-method>—</span><span data-filter>—</span></div>
     </div>
-    <div class="footer"><span>拖动旋转 · 滚轮缩放 · 右键平移</span><span data-detail>文件在本机解析，不会上传。</span></div>
+    <div class="navigation" aria-label="相机控制">
+      <div class="mode-switch" role="group" aria-label="相机模式"><button type="button" data-mode="orbit" aria-pressed="true">转台</button><button type="button" data-mode="fly" aria-pressed="false">自由漫游</button></div>
+      <label class="fly-speed" hidden>移动速度 <select data-speed aria-label="漫游移动速度"><option value="0.25">慢速 · 0.25×</option><option value="1" selected>标准 · 1×</option><option value="4">快速 · 4×</option></select></label>
+      <span class="navigation-key">V 切换模式</span>
+    </div>
+    <div class="footer"><span data-help>拖动旋转 · 滚轮缩放 · 右键平移 · 双击聚焦</span><span data-detail>文件在本机解析，不会上传。</span></div>
   </div>`;
 
 /** Framework-independent mount; styles are scoped by a shadow root in the element. */
 export class GaussianViewer {
-  constructor(root, { pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2), onLoad, onError, onReady } = {}) {
+  constructor(root, { pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2), controlMode = 'orbit', onLoad, onError, onReady } = {}) {
     this.root = root; this.options = { pixelRatio, onLoad, onError, onReady };
     this.abort = new AbortController(); this.loader = new PlyLoader(); this.generation = 0; this.uploadQueue = Promise.resolve();
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./viewer.css', import.meta.url).href;
     root.replaceChildren(link); const container = document.createElement('div'); container.innerHTML = template; root.append(container);
     this.canvas = root.querySelector('canvas'); this.stage = root.querySelector('.stage'); this.message = root.querySelector('.message');
-    this.controls = new OrbitControls(this.canvas, () => this.invalidate());
+    this.controls = new OrbitControls(this.canvas, () => this.invalidate(), () => this._updateNavigation());
     const listen = (element, type, fn, options = {}) => element.addEventListener(type, fn, { ...options, signal: this.abort.signal });
     const file = root.querySelector('[data-file]');
     listen(root.querySelector('[data-open]'), 'click', () => file.click());
     listen(file, 'change', () => { const selected = file.files[0]; file.value = ''; if (selected) this.load(selected).catch(() => {}); });
     ['[data-demo]', '[data-example]'].forEach(selector => listen(root.querySelector(selector), 'click', () => this.loadDemo().catch(() => {})));
     listen(root.querySelector('[data-reset]'), 'click', () => this.resetCamera());
+    root.querySelectorAll('[data-mode]').forEach(button => listen(button, 'click', () => { this.setControlMode(button.dataset.mode); this.canvas.focus({ preventScroll: true }); }));
+    listen(root.querySelector('[data-speed]'), 'change', e => { this.controls.setSpeed(Number(e.target.value)); this.canvas.focus({ preventScroll: true }); });
+    listen(this.canvas, 'dblclick', e => {
+      if (e.button !== 0 || !this.controls.enabled || !this.modelInfo) return;
+      e.preventDefault();
+      this.controls.stop();
+      const box = this.canvas.getBoundingClientRect();
+      this.focusAt(e.clientX - box.left, e.clientY - box.top).catch(error => this._error(error));
+    });
     listen(this.stage, 'dragover', e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
     listen(this.stage, 'drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) this.load(f).catch(() => {}); });
-    listen(document, 'visibilitychange', () => this.invalidate());
+    listen(document, 'visibilitychange', () => { if (document.hidden) this.controls.stop(); this.invalidate(); });
     this.visible = true;
-    this.intersection = new IntersectionObserver(entries => { this.visible = entries[0].isIntersecting; if (this.visible) this.invalidate(); });
+    this.intersection = new IntersectionObserver(entries => { this.visible = entries[0].isIntersecting; if (this.visible) this.invalidate(); else this.controls.stop(); });
     this.intersection.observe(this.stage);
     this.resize = new ResizeObserver(() => this.invalidate()); this.resize.observe(this.stage);
+    this.setControlMode(controlMode);
   }
+  _updateNavigation() {
+    const fly = this.controls.mode === 'fly', enabled = this.controls.enabled;
+    this.root.querySelectorAll('[data-mode]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.mode === this.controls.mode)); button.disabled = !enabled; });
+    this.root.querySelector('.fly-speed').hidden = !fly;
+    this.root.querySelector('[data-speed]').disabled = !enabled;
+    const help = !enabled ? '标定相机 · 重置视角后恢复交互' : fly
+      ? '拖动环视 · WASD 移动 · Q/E 升降 · 滚轮前后 · Shift 加速 / Alt 慢速 · 双击回到转台'
+      : '拖动旋转 · 滚轮缩放 · 右键平移 · 双击平滑聚焦 · WASD 进入漫游';
+    this.root.querySelector('[data-help]').textContent = help;
+    this.canvas.setAttribute('aria-label', `Gaussian 三维场景。${help}。V 切换模式，R 重置。`);
+  }
+  setControlMode(mode) { if (!this.controls.enabled) return; this.controls.setMode(mode); this._updateNavigation(); }
   async initialize() {
     if (this.renderer?.lost) { this.renderer.dispose(); this.renderer = null; this.initializing = null; }
     if (!this.initializing) {
@@ -73,6 +100,7 @@ export class GaussianViewer {
       if (!await upload || generation !== this.generation || this.disposed) return;
       this.modelInfo = { ...renderer.model, name: model.name, hasFilter3D: model.hasFilter3D, bounds: model.bounds || modelBounds(model.data) };
       this.calibratedCamera = null; this.controls.enabled = true; this.controls.fit(this.modelInfo.bounds);
+      this._updateNavigation();
       this.root.querySelector('.empty').hidden = true;
       this.root.querySelector('[data-reset]').disabled = false;
       this.root.querySelector('[data-name]').textContent = model.name;
@@ -125,17 +153,32 @@ export class GaussianViewer {
   setCamera(camera) {
     validateCamera(camera);
     this.calibratedCamera = { ...camera, worldToCamera: new Float32Array(camera.worldToCamera), distortion: [...(camera.distortion || [0, 0, 0, 0])] };
-    this.controls.enabled = false; this.invalidate();
+    this.controls.enabled = false; this._updateNavigation(); this.invalidate();
   }
-  resetCamera() { this.calibratedCamera = null; this.controls.enabled = true; this.controls.reset(); }
+  resetCamera() { this.calibratedCamera = null; this.controls.enabled = true; this.controls.reset(); this._updateNavigation(); }
+  /** CSS pixels relative to the canvas. Calibrated cameras retain exact output. */
+  async focusAt(x, y) {
+    if (this.disposed || !this.controls.enabled || !this.renderer || !this.modelInfo || this.stage.getAttribute('aria-busy') === 'true') return null;
+    const box = this.canvas.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return null;
+    const renderer = this.renderer, generation = this.generation, revision = this.focusRevision = (this.focusRevision || 0) + 1;
+    const frame = renderer.frameCount, view = this.controls.view(), controlsRevision = this.controls.revision;
+    const point = await renderer.pick(x * renderer.width / box.width, y * renderer.height / box.height);
+    const currentView = this.controls.view();
+    if (this.disposed || generation !== this.generation || revision !== this.focusRevision || controlsRevision !== this.controls.revision || frame !== renderer.frameCount || !this.controls.enabled || !view.every((v, i) => v === currentView[i])) return null;
+    if (point) this.controls.focus(point);
+    return point;
+  }
   invalidate() {
     if (this.frame || this.disposed) return;
-    this.frame = requestAnimationFrame(() => {
+    this.frame = requestAnimationFrame(time => {
       this.frame = 0;
       if (!this.renderer?.model || !this.visible || document.hidden || this.disposed) return;
       const box = this.stage.getBoundingClientRect(); if (box.width < 1 || box.height < 1) return;
+      const active = this.controls.update(time);
       const camera = this.calibratedCamera || this.controls.camera(Math.max(1, Math.round(box.width * this.options.pixelRatio)), Math.max(1, Math.round(box.height * this.options.pixelRatio)));
       try { this.renderer.render(camera); } catch (error) { this._error(error); }
+      if (active) this.invalidate();
     });
   }
   dispose() {

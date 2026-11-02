@@ -39,7 +39,7 @@ export class GaussianRenderer {
     if (!this.context) throw new Error('Canvas 无法创建 WebGPU 上下文。');
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
-    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact'];
+    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick'];
     const sources = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`./shaders/${name}.wgsl`, import.meta.url));
       if (!response.ok) throw new Error(`Shader ${name}: HTTP ${response.status}`);
@@ -52,10 +52,11 @@ export class GaussianRenderer {
       if (errors.length) throw new Error(`${label}: ${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
       return shader;
     };
-    const [projection, draw, radix, blit, rays, compactShader] = await Promise.all([
+    const [projection, draw, radix, blit, rays, compactShader, pickShader] = await Promise.all([
       module('Photara projection', sources[0] + sources[1]),
       module('Photara draw', sources[0] + sources[2]),
       module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]), module('Visible compaction', sources[0] + sources[5]),
+      module('Focus picking', sources[0] + sources[6]),
     ]);
     this.uniform = device.createBuffer({ label: 'CV camera', size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     if (this.profiling) {
@@ -75,6 +76,7 @@ export class GaussianRenderer {
     device.pushErrorScope('validation');
     try {
       this.projectPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: projection, entryPoint: 'main' } });
+      this.pickPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: pickShader, entryPoint: 'main' } });
       this.compactPipelines = await Promise.all(['countMain', 'prefixMain', 'scatterMain'].map(entryPoint => device.createComputePipelineAsync({ layout: compactLayout, compute: { module: compactShader, entryPoint } })));
       this.rayPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: rays, entryPoint: 'main' } });
       this.sortPipelines = await Promise.all(['histogramMain', 'prefixMain', 'scatterMain'].map(entryPoint => device.createComputePipelineAsync({ layout: sortPipelineLayout, compute: { module: radix, entryPoint } })));
@@ -128,7 +130,7 @@ export class GaussianRenderer {
       const counts = buffer('Visible block counts', groups * 4), offsets = buffer('Visible block offsets', groups * 4);
       const indirect = buffer('Visible indirect arguments', 32, null, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC);
       const compactGroup = bind(this.compactLayout, [this.uniform, keys[0], keys[1], ranks, counts, offsets, sortParams, indirect]);
-      state = { memory: { attributes: model.data.byteLength, sh: packedSH.data.byteLength, projected: n * 96 }, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
+      state = { memory: { attributes: model.data.byteLength, sh: packedSH.data.byteLength, projected: n * 96 }, attributes, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
     } catch (error) { failure = error; }
     const validation = await d.popErrorScope(), memory = await d.popErrorScope();
     if (failure || validation || memory || this.disposed) {
@@ -137,6 +139,7 @@ export class GaussianRenderer {
     }
     this.resources.forEach(b => b.destroy());
     this.resources = buffers; this.state = state;
+    this.hasRenderedModel = false;
     // Retain only metadata on the renderer; the viewer may release CPU arrays.
     this.model = { shFormat: packedSH.format, count: n, bases: model.bases, degree: Math.sqrt(model.bases) - 1, renderMethod: model.renderMethod, filterMode: model.filterMode };
   }
@@ -223,7 +226,33 @@ export class GaussianRenderer {
     pass.end();
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, this.presentGroup);
     if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 10, this.timestampBuffer, 0);
-    this.device.queue.submit([encoder.finish()]); this.frameCount++;
+    this.device.queue.submit([encoder.finish()]); this.frameCount++; this.hasRenderedModel = true;
+  }
+
+  /** Pick a world-space focus point from the last frame, in canvas pixels.
+   * Gaussian data has no mesh surface: this uses accumulated-opacity depth.
+   * Only explicit picks allocate/read back 16 bytes; the frame loop is unchanged.
+   */
+  async pick(x, y) {
+    this._check();
+    if (!this.hasRenderedModel || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= this.width || y >= this.height) return null;
+    const d = this.device, buffers = [];
+    const allocate = (size, usage) => { const b = d.createBuffer({ size, usage }); buffers.push(b); return b; };
+    try {
+      const request = allocate(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+      const result = allocate(16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+      const output = allocate(16, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+      d.queue.writeBuffer(request, 0, new Uint32Array([Math.floor(x), Math.floor(y), this.lastCompact ? 1 : 0, 0]));
+      const group = d.createBindGroup({ layout: this.pickPipeline.getBindGroupLayout(0), entries:
+        [this.uniform, this.state.projected, this.state.keys[this.lastCompact ? 1 : 0], this.state.attributes, this.state.indirect, request, result]
+          .map((buffer, binding) => ({ binding, resource: { buffer } })) });
+      const encoder = d.createCommandEncoder({ label: 'Double-click focus' });
+      const pass = encoder.beginComputePass(); pass.setPipeline(this.pickPipeline); pass.setBindGroup(0, group); pass.dispatchWorkgroups(1); pass.end();
+      encoder.copyBufferToBuffer(result, 0, output, 0, 16); d.queue.submit([encoder.finish()]);
+      await output.mapAsync(GPUMapMode.READ);
+      const point = new Float32Array(output.getMappedRange());
+      return point[3] > 0 && point.every(Number.isFinite) ? Array.from(point.slice(0, 3)) : null;
+    } finally { buffers.forEach(b => b.destroy()); }
   }
 
   /** Optional GPU pass timings, read only by an explicit profiling caller. */

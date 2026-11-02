@@ -210,6 +210,31 @@ try{
     const expected=[.5-.4886025119029199*d[1]*.2,.5+.4886025119029199*d[2]*.3,.5-.4886025119029199*d[0]*.4];
     expected.forEach((v,a)=>assert(Math.abs(pixels[i+a]-Math.round(v*alpha*255))<=2,'SH direction mismatch'));
   });
+  await test('GPU focus picking: GS/GUT opacity depth, background, compaction and cameras',async()=>{
+    for(const method of ['3dgs','3dgut'])for(const compact of [true,false]) {
+      // A faint foreground floater must not steal the opaque surface focus.
+      await r.setModel(model([{p:[0,0,1],s:[.1,.1,.1],alpha:.02},{p:[0,0,2],s:[.2,.2,.2],alpha:.9}],method));
+      assert(await r.pick(31,26)===null,'New model used stale projection');
+      r.render(cam,{compact});const hit=await r.pick(31,26);
+      assert(hit&&Math.hypot(hit[0],hit[1],hit[2]-2)<1e-4,`${method} wrong surface ${hit}`);
+      assert(await r.pick(0,0)===null,'Background changed focus');
+      assert(await r.pick(-1,26)===null&&await r.pick(NaN,26)===null,'Invalid pick accepted');
+      r.render({...cam,near:10},{compact});assert(await r.pick(31,26)===null,'Empty frame picked stale data');
+    }
+    for(const mode of ['pinhole','orthographic','fisheye','equirectangular']) {
+      const c={...cam,model:mode,worldToCamera:lookAtCV([2,-1,-3],[2,-1,0])};
+      if(mode==='equirectangular')Object.assign(c,{fx:65/(2*Math.PI),fy:57/Math.PI,cx:32.5,cy:28.5});
+      await r.setModel(model([{p:[2,-1,0],s:[.3,.3,.3],alpha:.8}],'3dgut'));
+      r.render(c);const hit=await r.pick(c.cx,c.cy);
+      assert(hit&&Math.hypot(hit[0]-2,hit[1]+1,hit[2])<.2,`${mode} world-space pick failed ${hit}`);
+    }
+    await r.setModel(model([{p:[0,0,2],s:[.3,.3,.3],alpha:.1}]));r.render(cam);
+    assert(await r.pick(31,26),'Thin surface fallback missing');
+    const misses=Array.from({length:600},()=>({p:[.5,0,1],s:[.01,.01,.01],alpha:.9}));
+    await r.setModel(model([...misses,{p:[0,0,2],s:[.2,.2,.2],alpha:.9}]));
+    r.render(cam);const batched=await r.pick(31,26);
+    assert(batched&&Math.abs(batched[2]-2)<1e-4,'Picking did not traverse workgroup batches');
+  });
   await test('Near clipping and resize/readback row padding',async()=>{
     await r.setModel(model(scene));r.render({...cam,near:10,width:67,height:41},{background:[.1,.2,.3]});const p=await r.readPixels();
     assert(p.length===67*41*4,'Readback dimensions');assert(Math.abs(p[0]-26)<=1&&Math.abs(p.at(-2)-77)<=1,'Clipped frame/background');

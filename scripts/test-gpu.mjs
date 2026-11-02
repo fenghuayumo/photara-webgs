@@ -36,8 +36,112 @@ try {
     const after = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);
     if (before === after) throw new Error('Keyboard orbit did not update camera');
     result.ui.push('Keyboard orbit');
+    const focus = await page.evaluate(async () => {
+      const viewer = document.querySelector('photara-viewer').viewer;
+      viewer.options.pixelRatio = 1.5;
+      const frame = viewer.renderer.frameCount; viewer.invalidate();
+      while(viewer.renderer.frameCount === frame) await new Promise(requestAnimationFrame);
+      const { renderer, controls, canvas } = viewer, box = canvas.getBoundingClientRect();
+      for(const [u,v] of [[.6,.5],[.4,.5],[.5,.6],[.5,.4]]) {
+        const point = await renderer.pick(u*renderer.width,v*renderer.height);
+        if(point && Math.hypot(...point.map((x,i)=>x-controls.target[i]))>.01) {
+          const m=controls.view();
+          const eye=[0,1,2].map(a=>-(m[a*4]*m[12]+m[a*4+1]*m[13]+m[a*4+2]*m[14]));
+          return { point, eye, yaw:controls.yaw, pitch:controls.pitch, x:u*box.width, y:v*box.height };
+        }
+      }
+      throw new Error('No off-center focus test point found');
+    });
+    await page.evaluate(()=>{
+      const viewer=document.querySelector('photara-viewer').viewer;
+      viewer.canvas.addEventListener('dblclick',e=>{
+        const box=viewer.canvas.getBoundingClientRect(),r=viewer.renderer;
+        window.__focusExpected=r.pick((e.clientX-box.left)*r.width/box.width,(e.clientY-box.top)*r.height/box.height);
+      },{once:true,capture:true});
+    });
+    await canvas.dblclick({position:{x:focus.x,y:focus.y}});
+    focus.point=await page.evaluate(()=>window.__focusExpected);
+    if(!focus.point)throw new Error('Double-click did not hit model');
+    await page.waitForFunction(point=>{
+      const c=document.querySelector('photara-viewer').viewer.controls;
+      return !c.transition&&Math.hypot(...point.map((x,i)=>x-c.target[i]))<1e-4;
+    },focus.point);
+    const centered=await page.evaluate(({point,eye,yaw,pitch})=>{
+      const c=document.querySelector('photara-viewer').viewer.controls,m=c.view();
+      const cameraPoint=[0,1,2].map(a=>m[a]*point[0]+m[a+4]*point[1]+m[a+8]*point[2]+m[a+12]);
+      return c.yaw===yaw&&c.pitch===pitch&&Math.hypot(...cameraPoint.slice(0,2))<1e-4&&Math.abs(c.radius-Math.hypot(...point.map((v,i)=>v-eye[i])))<1e-4;
+    },focus);
+    if(!centered)throw new Error('Focus did not recenter while preserving orientation and picked distance');
+    await page.keyboard.press('r');
+    const reset=await page.evaluate(()=>{
+      const c=document.querySelector('photara-viewer').viewer.controls;
+      return c.target.every((v,i)=>v===c.initial.target[i])&&c.radius===c.initial.radius;
+    });
+    if(!reset)throw new Error('Focus changed the initial reset camera');
+    result.ui.push('Smooth double-click recenter at 1.5 pixel ratio, orientation preservation and R reset');
+    const dollyTarget = await page.evaluate(()=>{
+      const c=document.querySelector('photara-viewer').viewer.controls;
+      c.zoom(c.minimum/c.radius);
+      return [...c.target];
+    });
+    await canvas.hover(); await page.mouse.wheel(0,-100);
+    await page.waitForFunction(target=>{
+      const c=document.querySelector('photara-viewer').viewer.controls;
+      return c.radius===c.minimum&&Math.hypot(...c.target.map((v,i)=>v-target[i]))>1e-6;
+    },dollyTarget);
+    await canvas.focus(); await page.keyboard.press('r');
+    result.ui.push('Mouse wheel keeps moving forward at minimum orbit distance');
+    const pose=await page.evaluate(()=>Array.from(document.querySelector('photara-viewer').viewer.controls.view()));
+    await page.locator('photara-viewer').locator('[data-mode="fly"]').click();
+    const flyPose=await page.evaluate(()=>Array.from(document.querySelector('photara-viewer').viewer.controls.view()));
+    if(pose.some((v,i)=>v!==flyPose[i]))throw new Error('Switch to fly changed camera pose');
+    await page.locator('photara-viewer').locator('[data-speed]').selectOption('4');
+    const flyWheel=await page.evaluate(()=>{
+      const c=document.querySelector('photara-viewer').viewer.controls;
+      return {target:[...c.target],radius:c.radius};
+    });
+    await canvas.hover();await page.mouse.wheel(0,-100);
+    await page.waitForFunction(({target,radius})=>{
+      const c=document.querySelector('photara-viewer').viewer.controls;
+      return c.radius===radius&&Math.hypot(...c.target.map((v,i)=>v-target[i]))>.01;
+    },flyWheel);
+    const flyStart=await page.evaluate(()=>[...document.querySelector('photara-viewer').viewer.controls.target]);
+    await canvas.focus(); await page.keyboard.down('w');
+    await page.waitForFunction(target=>document.querySelector('photara-viewer').viewer.controls.target.some((v,i)=>Math.abs(v-target[i])>.02),flyStart);
+    await page.keyboard.up('w');
+    // Force another frame after keyup, then check that an idle camera stops rendering.
+    await page.evaluate(()=>document.querySelector('photara-viewer').viewer.invalidate());
+    await page.waitForFunction(()=>document.querySelector('photara-viewer').viewer.frame===0);
+    const stopped=await page.evaluate(()=>[...document.querySelector('photara-viewer').viewer.controls.target]);
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const still=await page.evaluate(()=>[...document.querySelector('photara-viewer').viewer.controls.target]);
+    if(still.some((v,i)=>v!==stopped[i]))throw new Error('Camera kept moving after key release');
+    const flyEye=await page.evaluate(()=>{
+      const m=document.querySelector('photara-viewer').viewer.controls.view();
+      return [0,1,2].map(a=>-(m[a*4]*m[12]+m[a*4+1]*m[13]+m[a*4+2]*m[14]));
+    });
+    await canvas.hover();const cb=await canvas.boundingBox();
+    await page.mouse.move(cb.x+cb.width*.5,cb.y+cb.height*.5);await page.mouse.down();
+    await page.mouse.move(cb.x+cb.width*.55,cb.y+cb.height*.53,{steps:5});await page.mouse.up();
+    const lookError=await page.evaluate(eye=>{
+      const m=document.querySelector('photara-viewer').viewer.controls.view();
+      return Math.hypot(...[0,1,2].map(a=>-(m[a*4]*m[12]+m[a*4+1]*m[13]+m[a*4+2]*m[14])-eye[a]));
+    },flyEye);
+    if(lookError>1e-4)throw new Error('Fly look moved camera position');
+    await canvas.focus();await page.keyboard.press('v');
+    await page.locator('photara-viewer').locator('[data-mode="orbit"][aria-pressed="true"]').waitFor();
+    await page.keyboard.press('w');
+    await page.locator('photara-viewer').locator('[data-mode="fly"][aria-pressed="true"]').waitFor();
+    await page.keyboard.press('r');
+    // Double-click from fly must return to orbit after a successful pick.
+    await page.locator('photara-viewer').locator('[data-speed]').selectOption('1');
+    await canvas.dblclick({position:{x:focus.x,y:focus.y}});
+    await page.locator('photara-viewer').locator('[data-mode="orbit"][aria-pressed="true"]').waitFor();
+    await page.waitForFunction(()=>!document.querySelector('photara-viewer').viewer.controls.transition);
+    result.ui.push('Orbit/fly UI and V toggle, WASD hold/release, free look, speed, double-click returns to orbit');
     await page.locator('#camera').setInputFiles(fileURLToPath(new URL('../examples/camera.json', import.meta.url)));
     await page.waitForFunction(() => document.querySelector('photara-viewer').viewer.calibratedCamera?.width === 1280);
+    if(!await page.locator('photara-viewer').locator('[data-mode="fly"]').isDisabled())throw new Error('Calibrated camera allowed navigation');
     const download = page.waitForEvent('download'); await page.locator('#capture').click();
     if ((await download).suggestedFilename() !== 'photara-webgs.png') throw new Error('Screenshot download failed');
     result.ui.push('Calibrated camera file import and PNG export');
@@ -45,6 +149,7 @@ try {
     await page.waitForFunction(() => !document.querySelector('photara-viewer').viewer.calibratedCamera);
     await page.screenshot({ path: fileURLToPath(new URL('../test-results/desktop.png', import.meta.url)), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('photara-viewer').locator('[data-mode="fly"]').click();
     await page.screenshot({ path: fileURLToPath(new URL('../test-results/mobile.png', import.meta.url)), fullPage: true });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     if (overflow) throw new Error('Mobile viewport overflow');

@@ -5,6 +5,7 @@ button { font: inherit; cursor: pointer; border: 1px solid #ffffff22; color: inh
 button:hover { background: #ffffff13; }
 button:disabled { opacity: .35; cursor: default; }
 button:focus-visible, canvas:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 3px; }
+select:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 3px; }
 .viewer { background: var(--pg-bg); border: 1px solid #ffffff18; border-radius: 16px; overflow: hidden; }
 .stage { position: relative; height: clamp(320px, 55vw, 650px); background: radial-gradient(ellipse at 50% 45%, #20333b 0%, #101c23 65%, #0b1419 100%); overflow: hidden; }
 canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -28,10 +29,18 @@ canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
 .metadata { display: flex; align-items: center; gap: 18px; font-size: 12px; color: #9baeb5; font-variant-numeric: tabular-nums; }
 .metadata span + span { border-left: 1px solid #ffffff20; padding-left: 18px; }
 .footer { display: flex; gap: 16px; justify-content: space-between; padding: 0 24px 18px; color: #748a94; font-size: 11px; line-height: 1.7; }
+.navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0 24px 16px; }
+.mode-switch { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #ffffff18; border-radius: 10px; }
+.mode-switch button { border-color: transparent; padding: 6px 12px; min-height: 34px; }
+.mode-switch button[aria-pressed="true"] { background: var(--pg-accent); color: #17251e; }
+.fly-speed { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #9baeb5; }
+.fly-speed select { font: inherit; min-height: 36px; padding: 4px 8px; border: 1px solid #ffffff22; border-radius: 8px; background: #14252a; color: var(--pg-text); }
+.navigation-key { font-size: 11px; color: #748a94; }
 @media(max-width: 640px) {
   .stage { height: 380px; }
   .toolbar { flex-direction: column; align-items: flex-start; padding: 16px; gap: 14px; }
   .footer { flex-direction: column; padding: 0 16px 16px; gap: 3px; }
+  .navigation { padding: 0 16px 14px; gap: 8px; }
   .badge { top: 16px; left: 16px; }
   .reset { right: 16px; bottom: 16px; }
 }
