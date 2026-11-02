@@ -6,7 +6,7 @@ export class OrbitControls {
     const listen = (type, fn, options = {}) => canvas.addEventListener(type, fn, { ...options, signal: this.abort.signal });
     canvas.tabIndex = 0; canvas.style.touchAction = 'none';
     this.target = [0, 0, 0]; this.radius = 3; this.yaw = .3; this.pitch = -.15;
-    this.initial = null; this.enabled = true; this.mode = 'orbit'; this.speed = 1; this.onModeChange = onModeChange;
+    this.initial = null; this.enabled = true; this.mode = 'orbit'; this.speed = 0.25; this.onModeChange = onModeChange;
     this.keys = new Set(); this.revision = 0;
     listen('contextmenu', e => e.preventDefault());
     listen('pointerdown', e => {

@@ -152,7 +152,7 @@ test('fly movement is time based, normalizes diagonals and stops on blur or disa
     const stopped=[...c.target];c.keys.add('KeyW');c.enabled=false;c.update(3000);
     assert.deepEqual(c.target,stopped);assert.equal(c.keys.size,0);c.dispose();return distance;
   };
-  near(travel(60),5,1e-5);near(travel(120),5,1e-5);near(travel(60,true),5,1e-5);
+  near(travel(60),1.25,1e-5);near(travel(120),1.25,1e-5);near(travel(60,true),1.25,1e-5);
 });
 
 test('keyboard V toggles mode and movement keys enter fly; fly zoom preserves orbit distance',()=>{

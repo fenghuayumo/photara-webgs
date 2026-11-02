@@ -19,7 +19,7 @@ const template = `
     </div>
     <div class="navigation" aria-label="相机控制">
       <div class="mode-switch" role="group" aria-label="相机模式"><button type="button" data-mode="orbit" aria-pressed="true">转台</button><button type="button" data-mode="fly" aria-pressed="false">自由漫游</button></div>
-      <label class="fly-speed" hidden>移动速度 <select data-speed aria-label="漫游移动速度"><option value="0.25">慢速 · 0.25×</option><option value="1" selected>标准 · 1×</option><option value="4">快速 · 4×</option></select></label>
+      <label class="fly-speed" title="控制 WASD、Q/E 和漫游滚轮的移动速度">漫游速度 <input type="range" data-speed aria-label="漫游移动速度" aria-valuetext="0.25 倍" min="-2" max="1" step="0.001" value="-0.602"><output data-speed-value>0.25×</output></label>
       <span class="navigation-key">V 切换模式</span>
       <label class="render-quality">渲染 <select data-quality aria-label="渲染质量模式"><option value="sorted">完整画质</option><option value="movement">交互加速（移动时有噪点）</option></select></label>
       <label class="render-quality" data-denoise-label hidden>去噪 <select data-denoise aria-label="随机渲染去噪"><option value="temporal">空间 + 时间重投影</option><option value="spatial">仅空间重建</option><option value="none">关闭（原始采样）</option></select></label>
@@ -45,7 +45,12 @@ export class GaussianViewer {
     ['[data-demo]', '[data-example]'].forEach(selector => listen(root.querySelector(selector), 'click', () => this.loadDemo().catch(() => {})));
     listen(root.querySelector('[data-reset]'), 'click', () => this.resetCamera());
     root.querySelectorAll('[data-mode]').forEach(button => listen(button, 'click', () => { this.setControlMode(button.dataset.mode); this.canvas.focus({ preventScroll: true }); }));
-    listen(root.querySelector('[data-speed]'), 'change', e => { this.controls.setSpeed(Number(e.target.value)); this.canvas.focus({ preventScroll: true }); });
+    listen(root.querySelector('[data-speed]'), 'input', e => {
+      const speed = Math.round(10 ** Number(e.target.value) * 100) / 100;
+      this.controls.setSpeed(speed);
+      root.querySelector('[data-speed-value]').textContent = `${speed.toFixed(2)}×`;
+      e.target.setAttribute('aria-valuetext', `${speed.toFixed(2)} 倍`);
+    });
     listen(root.querySelector('[data-quality]'), 'change', e => this.setRenderingMode(e.target.value));
     listen(root.querySelector('[data-denoise]'), 'change', e => this.setReconstructionMode(e.target.value));
     listen(this.canvas, 'dblclick', e => {
@@ -87,7 +92,6 @@ export class GaussianViewer {
   _updateNavigation() {
     const fly = this.controls.mode === 'fly', enabled = this.controls.enabled;
     this.root.querySelectorAll('[data-mode]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.mode === this.controls.mode)); button.disabled = !enabled; });
-    this.root.querySelector('.fly-speed').hidden = !fly;
     this.root.querySelector('[data-speed]').disabled = !enabled;
     const help = !enabled ? '标定相机 · 重置视角后恢复交互' : fly
       ? '拖动环视 · WASD 移动 · Q/E 升降 · 滚轮前后 · Shift 加速 / Alt 慢速 · 双击回到转台'
