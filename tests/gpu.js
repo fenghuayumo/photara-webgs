@@ -169,7 +169,7 @@ try{
     assert(maxError<=2,`Fisheye lens boundary differs from oracle: ${maxError}`);
   });
   for(const count of [777,65617])await test(`GPU radix stability: ${count} entries, partial group, culled keys`,async()=>{
-    const items=Array.from({length:count},(_,i)=>({p:[0,0,i%19===0?-1:1+((i*167)%149)/50],s:[.02,.02,.02]}));const m=model(items);await r.setModel(m);r.render(cam,{compact:false});
+    const items=Array.from({length:count},(_,i)=>({p:[0,0,i%19===0?-1:1+((i*167)%149)/50],s:[.02,.02,.02]}));const m=model(items);await r.setModel(m,{spatialBlocks:false});r.render(cam,{compact:false});
     const output=r.device.createBuffer({size:m.count*8,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
     const encoder=r.device.createCommandEncoder();encoder.copyBufferToBuffer(r.state.keys[0],0,output,0,m.count*8);r.device.queue.submit([encoder.finish()]);await output.mapAsync(GPUMapMode.READ);
     const got=new Uint32Array(output.getMappedRange()).slice();output.destroy();
@@ -367,6 +367,42 @@ try{
     }
     assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
     results.push({name:'Reconstruction detail/trail measurements',thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
+  });
+  await test('Spatial blocks preserve GS pixels, stable order and visible counts at clipping boundaries',async()=>{
+    let seed=81923;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+    const items=Array.from({length:1537},(_,i)=>({p:[(i%3===0?1:100)*(random()-.5),random()-.5,(random()-.1)*5],s:[.001+random()*.03,.001+random()*.5,.001+random()*.1],q:[random(),random(),random(),random()],alpha:.001+random()*.9}));
+    // Very wide anisotropic splats, off-screen centers, near-plane crossings,
+    // equal depths and an asymmetric principal point must survive broadphase.
+    items.push({p:[5,0,1],s:[3,.001,.1],alpha:.8},{p:[0,0,.0001],s:[.5,.5,.5],alpha:.6});
+    for(const filter of ['classic','mip2d','mip3d','mip']){
+      await r.setModel(model(items,'3dgs',filter),{spatialBlocks:true});
+      for(const mode of ['pinhole','orthographic'])for(const modifier of [.1,1,5])for(const compact of [false,true]){
+        const c={...cam,model:mode,cx:11,cy:39,worldToCamera:lookAtCV([.2,-.1,-.3],[0,0,2])};
+        r.render(c,{blockCulling:false,scaleModifier:modifier,compact});const ref=await r.readPixels(),visibility=await r.readVisibility();
+        r.render(c,{blockCulling:true,scaleModifier:modifier,compact});const actual=await r.readPixels();
+        assert(actual.every((v,i)=>v===ref[i]),`Spatial clipping: ${mode}/${filter}/${modifier}/${compact}`);
+        assert((await r.readVisibility()).visible===visibility.visible,'Blocks changed visible count');
+      }
+    }
+    const separated=Array.from({length:8193},(_,i)=>({p:[i%2?100:-100,0,2],s:[.01,.01,.01]}));
+    await r.setModel(model(separated),{spatialBlocks:true});r.render(cam);
+    const stats=await r.readBlockVisibility();assert(stats.enabled&&stats.candidateSplats<=256,'Offscreen blocks were not rejected');
+    // Rotate into one cluster: previously rejected projection entries must not
+    // be stale, and global depth ties retain the original-ID compositing order.
+    const c={...cam,worldToCamera:lookAtCV([0,0,0],[100,0,2])};
+    r.render(c,{blockCulling:false});const ref=await r.readPixels();
+    r.render(c);assert((await r.readPixels()).every((v,i)=>v===ref[i]),'Stale point state or depth-tie order');
+    for(const mode of ['fisheye','equirectangular']){
+      const camera={...cam,model:mode};if(mode==='equirectangular')Object.assign(camera,{fx:65/(2*Math.PI),fy:57/Math.PI,cx:32.5,cy:28.5});
+      r.render(camera);assert(!r.lastBlockCulling,'Unsupported lens used pinhole block bounds');
+    }
+    r.render(cam,{renderMethod:'3dgut'});assert(!r.lastBlockCulling,'GUT used GS block bounds');
+    const ties=model(Array.from({length:1025},(_,i)=>({p:[(i%17-8)*.01,0,2],s:[.1,.1,.1],alpha:.1,color:[i%2,.2,(i%3)/3]})),'3dgs','classic',4);
+    for(let i=0;i<ties.count;i++)ties.sh[i*12+3]=(i%5)*.1;
+    await r.setModel(ties,{spatialBlocks:false});r.render(cam);const original=await r.readPixels();
+    await r.setModel(ties,{spatialBlocks:true});r.render(cam);
+    assert((await r.readPixels()).every((v,i)=>v===original[i]),'GPU spatial layout changed original ties or SH correspondence');
+    const point=await r.pick(31,26);assert(point&&Math.abs(point[2]-2)<1e-4,'Spatial layout broke world picking');
   });
   await test('Near clipping and resize/readback row padding',async()=>{
     await r.setModel(model(scene));r.render({...cam,near:10,width:67,height:41},{background:[.1,.2,.3]});const p=await r.readPixels();

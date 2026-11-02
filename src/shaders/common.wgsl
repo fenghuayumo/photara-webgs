@@ -4,7 +4,7 @@ struct Camera {
     intrinsics: vec4f,
     viewport: vec4f, // width, height, near clip, scale modifier
     config: vec4u,     // count, bases, render method (0 GS / 1 GUT), filter (0..3)
-    lens: vec4u,     // camera model, SH degree, reserved
+    lens: vec4u,     // camera model, SH degree, flags (tight=1, blocks=2, spatial layout=4), SH storage
     distortion: vec4f,
 };
 struct Gaussian { centerOpacity: vec4f, scale: vec4f, quaternion: vec4f };

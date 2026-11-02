@@ -249,6 +249,21 @@ await renderer.setModel(editable); // 仍核对 canonical SH 编辑，必要时�
 获取 `model.loadStats`，以及 `setModel(model,{profiling:true})` 的 `renderer.lastUploadStats`。
 这些字节统计与 V8 采样均不能代替整进程内存测量；图片解码与 GPU 驱动仍有额外分配。
 
+## 3DGS 空间块提前剔除
+
+4096 点及以上模型默认构建空间块，在 pinhole / orthographic 的 3DGS 精确投影前
+保守剔除整个不可见块。完整 300 万点夹具的候选点约 32–42 万，精确输出与原基线一致。
+新增约 12.42 MB GPU 索引，增加一次加载构建与属性重排；不保证所有场景整帧提速。
+near 交叉、数值异常块保留，GUT/鱼眼/全景回退逐点投影。
+
+```js
+renderer.render(camera,{blockCulling:false}); // 仅关闭剔除
+await renderer.setModel(model,{spatialBlocks:false}); // 完全关闭空间布局
+console.log(await renderer.readBlockVisibility()); // 仅诊断使用
+```
+
+详见 [空间分块报告](docs/1023-spatial-blocks.md)。
+
 ## 可选随机渲染交互加速
 
 “渲染”选项默认 **完整画质**。选择 **交互加速（移动时有噪点）** 后，

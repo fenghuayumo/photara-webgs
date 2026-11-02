@@ -13,6 +13,7 @@ fn vertexQuad(vertex: u32, instance: u32) -> VertexOut {
     let id = keys[index].y;
     out.id = id;
     out.seamShift = 0.0;
+    if(keys[index].x==0xffffffffu){out.position=vec4f(2,2,0.5,1);return out;}
     let p = projected[id];
     if (p.color.w<ALPHA_FLOOR) { out.position=vec4f(2,2,0.5,1); return out; }
     let corners = array<vec2f,6>(vec2f(0,0),vec2f(1,0),vec2f(1,1),vec2f(0,0),vec2f(1,1),vec2f(0,1));

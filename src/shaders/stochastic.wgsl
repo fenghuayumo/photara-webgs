@@ -29,6 +29,7 @@ fn stochasticResponse(input: VertexOut) -> vec2f {
 }
 @vertex fn stochasticGSVertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> VertexOut {
     var out = vertexQuad(vertex,instance);
+    if(out.position.x==2.0&&out.position.y==2.0){return out;}
     let near = max(1e-6,cam.viewport.z);
     out.position.z = near/(near+max(0.0,projected[out.id].row0.y));
     return out;

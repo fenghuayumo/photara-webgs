@@ -3,6 +3,8 @@
 @group(0) @binding(2) var<storage,read> harmonics: array<u32>;
 @group(0) @binding(3) var<storage,read_write> projected: array<Projected>;
 @group(0) @binding(4) var<storage,read_write> keys: array<vec2u>;
+@group(0) @binding(5) var<storage,read> spatialIndices: array<u32>;
+@group(0) @binding(6) var<storage,read> blockVisible: array<u32>;
 fn coeff(id: u32, b: u32) -> vec3f {
     var k = (id*cam.config.y+b)*3u;
     if (cam.lens.w == 1u) {
@@ -98,10 +100,20 @@ fn nonlinearBounds(t: vec3f, radius: f32, a: vec3f, b: vec3f, c: vec3f, threshol
     return vec4f(x.x-1.0,y.x-1.0,x.y+1.0,y.y+1.0);
 }
 @compute @workgroup_size(256)
+fn clearMain(@builtin(global_invocation_id) tid: vec3u) {
+    if(tid.x>=cam.config.x){return;}
+    keys[tid.x]=vec2u(0xffffffffu,tid.x);
+}
+@compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) tid: vec3u) {
-    let id = tid.x;
-    if (id >= cam.config.x) { return; }
-    keys[id] = vec2u(0xffffffffu,id);
+    if (tid.x >= cam.config.x) { return; }
+    var id=tid.x;
+    if((cam.lens.z&2u)!=0u){
+        if(blockVisible[tid.x/256u]==0u){return;}
+    }
+    var original=id;
+    if((cam.lens.z&4u)!=0u){original=spatialIndices[id];}
+    keys[original] = vec2u(0xffffffffu,id);
     var out: Projected;
     projected[id] = out;
     let g = gaussians[id];
@@ -131,7 +143,7 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
                 out.bounds.x = -1.0; out.bounds.z = cam.viewport.x+1.0;
             }
             out.centerConic.xy = 0.5*(out.bounds.xy+out.bounds.zw);
-        } else if (cam.lens.z != 0u && cam.lens.x == 0u) {
+        } else if ((cam.lens.z&1u) != 0u && cam.lens.x == 0u) {
             // Exact tangent planes of the finite-alpha ellipsoid, rather than
             // a max-axis sphere. Retain full support when it crosses the eye.
             let x = vec3f(a.x,b.x,c.x); let y = vec3f(a.y,b.y,c.y); let z = vec3f(a.z,b.z,c.z);
@@ -221,9 +233,9 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
     if (out.bounds.w < 0.0 || out.bounds.y > cam.viewport.y) { return; }
     if (cam.lens.x != 3u && (out.bounds.z < 0.0 || out.bounds.x > cam.viewport.x)) { return; }
     // Avoid reading/evaluating SH for Gaussians rejected by screen bounds.
-    out.color = vec4f(colorSH(id,g.centerOpacity.xyz),out.color.w);
+    out.color = vec4f(colorSH(original,g.centerOpacity.xyz),out.color.w);
     projected[id] = out;
     let depth = select(t.z,length(t),cam.config.z==1u || cam.lens.x==3u);
     // Positive depth IEEE bits are monotonic. Invert for back-to-front draw.
-    keys[id] = vec2u(~bitcast<u32>(depth),id);
+    keys[original] = vec2u(~bitcast<u32>(depth),id);
 }

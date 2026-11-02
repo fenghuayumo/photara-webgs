@@ -1,5 +1,6 @@
 import { prepareSHStorage } from './gpu-storage.js';
 import { StochasticReconstruction } from './reconstruction.js';
+import { buildSpatialBlocks } from './spatial-blocks.js';
 import { validateModel, FILTER_MODES, RENDER_METHODS } from './model.js';
 import { validateCamera, cameraPosition, CAMERA_MODELS } from './camera.js';
 
@@ -40,7 +41,7 @@ export class GaussianRenderer {
     if (!this.context) throw new Error('Canvas 无法创建 WebGPU 上下文。');
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
-    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick', 'stochastic', 'reconstruct'];
+    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick', 'stochastic', 'reconstruct', 'blocks'];
     const sources = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`./shaders/${name}.wgsl`, import.meta.url));
       if (!response.ok) throw new Error(`Shader ${name}: HTTP ${response.status}`);
@@ -53,19 +54,20 @@ export class GaussianRenderer {
       if (errors.length) throw new Error(`${label}: ${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
       return shader;
     };
-    const [projection, draw, radix, blit, rays, compactShader, pickShader, stochasticShader, reconstructionShader] = await Promise.all([
+    const [projection, draw, radix, blit, rays, compactShader, pickShader, stochasticShader, reconstructionShader, blockShader] = await Promise.all([
       module('Photara projection', sources[0] + sources[1]),
       module('Photara draw', sources[0] + sources[2]),
       module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]), module('Visible compaction', sources[0] + sources[5]),
       module('Focus picking', sources[0] + sources[6]),
       module('Stochastic alpha', sources[0] + sources[2] + sources[7]),
       module('Stochastic reconstruction', sources[0] + sources[8]),
+      module('Spatial block visibility',sources[0]+sources[9]),
     ]);
     this.uniform = device.createBuffer({ label: 'CV camera', size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.stochasticUniform = device.createBuffer({ label: 'Stochastic sample seed', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     if (this.profiling) {
-      this.timestampQueries = device.createQuerySet({ type: 'timestamp', count: 14 });
-      this.timestampBuffer = device.createBuffer({ size: 112, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      this.timestampQueries = device.createQuerySet({ type: 'timestamp', count: 16 });
+      this.timestampBuffer = device.createBuffer({ size: 128, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
     }
     this.sortLayout = device.createBindGroupLayout({ entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 16 } },
@@ -83,6 +85,8 @@ export class GaussianRenderer {
       const temporal = await device.createComputePipelineAsync({layout:'auto',compute:{module:reconstructionShader,entryPoint:'temporalMain'}});
       this.reconstruction = new StochasticReconstruction(device,spatial,temporal);
       this.projectPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: projection, entryPoint: 'main' } });
+      this.clearProjectPipeline=await device.createComputePipelineAsync({layout:'auto',compute:{module:projection,entryPoint:'clearMain'}});
+      this.blockPipeline=await device.createComputePipelineAsync({layout:'auto',compute:{module:blockShader,entryPoint:'main'}});
       this.pickPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: pickShader, entryPoint: 'main' } });
       this.compactPipelines = await Promise.all(['countMain', 'prefixMain', 'scatterMain'].map(entryPoint => device.createComputePipelineAsync({ layout: compactLayout, compute: { module: compactShader, entryPoint } })));
       this.rayPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: rays, entryPoint: 'main' } });
@@ -115,7 +119,7 @@ export class GaussianRenderer {
   _check() { if (this.disposed || this.lost) throw new Error('Renderer is disposed or its GPU device was lost'); }
 
   /** Canonical or packed model buffers; atomically replaces the GPU model. */
-  async setModel(model, { shStorage = 'auto', profiling = false } = {}) {
+  async setModel(model, { shStorage = 'auto', profiling = false, spatialBlocks = 'auto' } = {}) {
     const start = profiling ? performance.now() : 0;
     this._check(); validateModel(model);
     const validated = profiling ? performance.now() : 0;
@@ -123,6 +127,10 @@ export class GaussianRenderer {
     const prepared = profiling ? performance.now() : 0;
     const shBytes = packedSH.byteLength ?? packedSH.data.byteLength;
     const d = this.device, n = model.count, groups = Math.ceil(n / 256);
+    if(![true,false,'auto'].includes(spatialBlocks))throw new Error('Invalid spatialBlocks option');
+    const indexStart=performance.now();
+    const spatial=(spatialBlocks===true||(spatialBlocks==='auto'&&n>=4096))?buildSpatialBlocks(model.data):null;
+    const indexBuildMs=performance.now()-indexStart;
     const max = Math.min(d.limits.maxStorageBufferBindingSize, d.limits.maxBufferSize);
     for (const size of [n * 96, shBytes, model.data.byteLength]) if (size > max) throw new Error(`模型超出此设备单个 GPU buffer 的限制（${Math.floor(max / 1048576)} MiB）。`);
     if (groups > d.limits.maxComputeWorkgroupsPerDimension) throw new Error('Model exceeds GPU dispatch limits');
@@ -132,7 +140,8 @@ export class GaussianRenderer {
       buffers.push(b);
       if (initial) {
         const target = new Uint8Array(b.getMappedRange());
-        for (const { data, offset } of Array.isArray(initial) ? initial : [{ data: initial, offset: 0 }]) target.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), offset);
+        if(typeof initial==='function')initial(target);
+        else for (const { data, offset } of Array.isArray(initial) ? initial : [{ data: initial, offset: 0 }]) target.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), offset);
         b.unmap();
       }
       return b;
@@ -140,7 +149,10 @@ export class GaussianRenderer {
     d.pushErrorScope('out-of-memory'); d.pushErrorScope('validation');
     let state, failure;
     try {
-      const attributes = buffer('Activated Gaussians', model.data.byteLength, model.data);
+      const attributes = buffer('Activated Gaussians', model.data.byteLength, spatial?target=>{
+        const floats=new Float32Array(target.buffer,target.byteOffset,target.byteLength/4);
+        for(let i=0;i<n;i++){const source=spatial.indices[i]*12;floats.set(model.data.subarray(source,source+12),i*12);}
+      }:model.data);
       const sh = buffer(`INRIA SH (${packedSH.format})`, shBytes, packedSH.segments || packedSH.data);
       const projected = buffer('Projected Gaussians', n * 96);
       const keys = [buffer('Keys A', n * 8), buffer('Keys B', n * 8)];
@@ -150,12 +162,17 @@ export class GaussianRenderer {
       for (let i = 0; i < 8; i++) params.set([n, i * 4, groups, 0], i * 64);
       const sortParams = buffer('Radix parameters', params.byteLength, params, GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
       const bind = (layout, list) => d.createBindGroup({ layout, entries: list.map((b, binding) => ({ binding, resource: { buffer: b } })) });
-      const projectGroup = bind(this.projectPipeline.getBindGroupLayout(0), [this.uniform, attributes, sh, projected, keys[0]]);
+      const spatialIndices=buffer('Spatial original IDs',spatial?.indices.byteLength||4,spatial?.indices);
+      const blockBounds=buffer('Spatial block bounds',spatial?.bounds.byteLength||32,spatial?.bounds);
+      const blockVisible=buffer('Spatial block visibility',spatial?spatial.count*4:4);
+      const blockGroup=bind(this.blockPipeline.getBindGroupLayout(0),[this.uniform,blockBounds,blockVisible]);
+      const projectGroup = bind(this.projectPipeline.getBindGroupLayout(0), [this.uniform, attributes, sh, projected, keys[0],spatialIndices,blockVisible]);
+      const clearProjectGroup=d.createBindGroup({layout:this.clearProjectPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:this.uniform}},{binding:4,resource:{buffer:keys[0]}}]});
       const sortGroups = [0, 1].map(i => d.createBindGroup({ layout: this.sortLayout, entries: [sortParams, keys[i], keys[1 - i], ranks, hist, prefixes, totals].map((b, binding) => ({ binding, resource: { buffer: b, ...(binding === 0 ? { size: 16 } : {}) } })) }));
       const counts = buffer('Visible block counts', groups * 4), offsets = buffer('Visible block offsets', groups * 4);
       const indirect = buffer('Visible indirect arguments', 32, null, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC);
       const compactGroup = bind(this.compactLayout, [this.uniform, keys[0], keys[1], ranks, counts, offsets, sortParams, indirect]);
-      state = { memory: { attributes: model.data.byteLength, sh: shBytes, projected: n * 96 }, attributes, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
+      state = { memory: { attributes: model.data.byteLength, sh: shBytes, projected: n * 96, spatial:spatialIndices.size+blockBounds.size+blockVisible.size },clearProjectGroup,blockVisible,blockGroup,blockCount:spatial?.count||0, attributes, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
     } catch (error) { failure = error; }
     const validation = await d.popErrorScope(), memory = await d.popErrorScope();
     if (failure || validation || memory || this.disposed) {
@@ -171,7 +188,8 @@ export class GaussianRenderer {
     this.model = { shFormat: packedSH.format, count: n, bases: model.bases, degree: Math.sqrt(model.bases) - 1, renderMethod: model.renderMethod, filterMode: model.filterMode };
     this.lastUploadStats = profiling ? {
       validation_ms: validated - start, sh_prepare_ms: prepared - validated,
-      gpu_upload_ms: performance.now() - prepared, total_ms: performance.now() - start,
+      spatial_build_ms:indexBuildMs,
+      gpu_upload_ms: performance.now() - prepared-indexBuildMs, total_ms: performance.now() - start,
       shTemporaryBytes: packedSH.data && packedSH.data !== model.sh && packedSH.data !== model.shDC ? packedSH.data.byteLength : 0,
     } : null;
   }
@@ -200,15 +218,17 @@ export class GaussianRenderer {
     if (this.state) { this.state.drawGroup = null; this.state.stochasticGroup = null; }
   }
 
-  render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1, tightBounds = true, compact = true, transparency = 'sorted', stochasticSeed = this.frameCount >>> 0, reconstruction = 'none', resetHistory = false } = {}) {
+  render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1, tightBounds = true, compact = true, transparency = 'sorted', stochasticSeed = this.frameCount >>> 0, reconstruction = 'none', resetHistory = false, blockCulling = true } = {}) {
     this._check();
     if (!this.model) throw new Error('Load a model before rendering');
     validateCamera(camera);
     if (!RENDER_METHODS.includes(renderMethod) || !FILTER_MODES.includes(filterMode)) throw new Error('Unknown rendering configuration');
     if (!['sorted', 'stochastic'].includes(transparency) || !Number.isInteger(stochasticSeed) || stochasticSeed < 0 || stochasticSeed > 0xffffffff) throw new Error('Invalid transparency mode or stochastic seed');
     if (!['none','spatial','temporal'].includes(reconstruction)) throw new Error('Unknown stochastic reconstruction');
+    if(typeof blockCulling!=='boolean')throw new Error('Invalid blockCulling option');
     if (!Number.isFinite(scaleModifier) || scaleModifier <= 0 || background.length !== 3 || !background.every(v => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error('Invalid render options');
     const { width, height } = camera;
+    this.lastBlockCulling=Boolean(blockCulling&&this.state.blockCount&&renderMethod==='3dgs'&&['pinhole','orthographic'].includes(camera.model||'pinhole'));
     this._resize(width, height);
     const stochastic = transparency === 'stochastic';
     const stochasticPipeline = renderMethod === '3dgs' ? this.stochasticGSPipeline : this.stochasticPipeline;
@@ -232,7 +252,7 @@ export class GaussianRenderer {
     f.set([camera.fx, camera.fy, camera.cx, camera.cy], 20);
     f.set([width, height, camera.near ?? .2, scaleModifier], 24);
     u.set([this.model.count, this.model.bases, RENDER_METHODS.indexOf(renderMethod), FILTER_MODES.indexOf(filterMode)], 28);
-    u.set([CAMERA_MODELS[camera.model ?? 'pinhole'], this.model.degree, tightBounds ? 1 : 0, this.model.shFormat === 'palette' ? 1 : 0], 32);
+    u.set([CAMERA_MODELS[camera.model ?? 'pinhole'], this.model.degree, (tightBounds ? 1 : 0)|(this.lastBlockCulling?2:0)|(this.state.blockCount?4:0), this.model.shFormat === 'palette' ? 1 : 0], 32);
     f.set(camera.distortion || [0, 0, 0, 0], 36);
     this.device.queue.writeBuffer(this.uniform, 0, bytes);
     if (stochastic) this.device.queue.writeBuffer(this.stochasticUniform, 0, new Uint32Array([stochasticSeed, reconstruction==='none'?0:1, 0, 0]));
@@ -249,7 +269,9 @@ export class GaussianRenderer {
       const rays = encoder.beginComputePass(timestamps(0, 1)); rays.setPipeline(this.rayPipeline); rays.setBindGroup(0, this.rayGroup);
       rays.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8)); rays.end(); this.rayKey = rayKey;
     }
-    let pass = encoder.beginComputePass(timestamps(2, 3));
+    if(this.lastBlockCulling){const blocks=encoder.beginComputePass(timestamps(14,15));blocks.setPipeline(this.blockPipeline);blocks.setBindGroup(0,this.state.blockGroup);blocks.dispatchWorkgroups(Math.ceil(this.state.blockCount/64));blocks.end();}
+    if(this.lastBlockCulling){const clear=encoder.beginComputePass(timestamps(2,undefined));clear.setPipeline(this.clearProjectPipeline);clear.setBindGroup(0,this.state.clearProjectGroup);clear.dispatchWorkgroups(this.state.groups);clear.end();}
+    let pass = encoder.beginComputePass(timestamps(this.lastBlockCulling?undefined:2, 3));
     pass.setPipeline(this.projectPipeline); pass.setBindGroup(0, this.state.projectGroup); pass.dispatchWorkgroups(this.state.groups); pass.end();
     if (compact) for (let stage = 0; stage < 3; stage++) {
       pass = encoder.beginComputePass(timestamps(stage === 0 ? 8 : undefined, stage === 2 ? 9 : undefined));
@@ -269,16 +291,16 @@ export class GaussianRenderer {
     this.displayTexture=this.texture;
     if (resetHistory) this.reconstruction.reset();
     if (stochastic && reconstruction!=='none') {
-      const key=JSON.stringify([camera.model||'pinhole',width,height,camera.fx,camera.fy,camera.cx,camera.cy,camera.distortion,renderMethod,filterMode,background,scaleModifier,tightBounds,compact,reconstruction]);
+      const key=JSON.stringify([camera.model||'pinhole',width,height,camera.fx,camera.fy,camera.cx,camera.cy,camera.distortion,renderMethod,filterMode,background,scaleModifier,tightBounds,compact,reconstruction,blockCulling]);
       this.displayTexture=this.reconstruction.encode(encoder,{camera,bytes,key,mode:reconstruction,rawColor:this.texture,rawDepth:this.depthTexture,cameraUniform:this.uniform,timestamps});
     } else this.reconstruction.reset();
     const displayGroup=this.displayTexture===this.texture?this.presentGroup:this.device.createBindGroup({layout:this.presentPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:this.displayTexture.createView()}]});
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, displayGroup);
-    if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 14, this.timestampBuffer, 0);
+    if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 16, this.timestampBuffer, 0);
     this.device.queue.submit([encoder.finish()]); this.frameCount++; this.hasRenderedModel = true;
     this.lastTransparency = transparency;
     this.lastReconstruction=stochastic?reconstruction:'none';
-    this.lastFrame = stochastic ? { camera: { ...camera, worldToCamera: Array.from(camera.worldToCamera), ...(camera.position ? { position: [...camera.position] } : {}), ...(camera.distortion ? { distortion: [...camera.distortion] } : {}) }, options: { renderMethod, filterMode, background: [...background], scaleModifier, tightBounds, compact } } : null;
+    this.lastFrame = stochastic ? { camera: { ...camera, worldToCamera: Array.from(camera.worldToCamera), ...(camera.position ? { position: [...camera.position] } : {}), ...(camera.distortion ? { distortion: [...camera.distortion] } : {}) }, options: { renderMethod, filterMode, background: [...background], scaleModifier, tightBounds, compact,blockCulling } } : null;
   }
 
   _encodeSort(encoder, compact, timestamps = () => ({})) {
@@ -325,13 +347,13 @@ export class GaussianRenderer {
   async readTimings() {
     this._check();
     if (!this.profiling || !this.frameCount) return null;
-    const output = this.device.createBuffer({ size: 112, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    const encoder = this.device.createCommandEncoder(); encoder.copyBufferToBuffer(this.timestampBuffer, 0, output, 0, 112);
+    const output = this.device.createBuffer({ size: 128, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const encoder = this.device.createCommandEncoder(); encoder.copyBufferToBuffer(this.timestampBuffer, 0, output, 0, 128);
     this.device.queue.submit([encoder.finish()]);
     try {
       await output.mapAsync(GPUMapMode.READ); const t = new BigUint64Array(output.getMappedRange());
       const ms = i => Number(t[i + 1] - t[i]) / 1e6;
-      return { compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6), spatial_ms:this.lastReconstruction!=='none'?ms(10):0, temporal_ms:this.lastReconstruction==='temporal'?ms(12):0 };
+      return { block_ms:this.lastBlockCulling?ms(14):0, compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6), spatial_ms:this.lastReconstruction!=='none'?ms(10):0, temporal_ms:this.lastReconstruction==='temporal'?ms(12):0 };
     } finally { output.destroy(); }
   }
 
@@ -343,6 +365,19 @@ export class GaussianRenderer {
     const textures = (this.texture ? this.width * this.height * 8 : 0) +
       (this.captureTexture ? this.width * this.height * 4 : 0) + (this.rayTexture ? this.rayWidth * this.rayHeight * 16 : 0) + (this.depthTexture ? this.width * this.height * 4 : 0) + (this.reconstruction?.bytes || 0);
     return { ...this.state?.memory, modelBuffers, controlBuffers, textures, total: modelBuffers + controlBuffers + textures, shFormat: this.model?.shFormat };
+  }
+
+  /** Explicit profiling readback only; never needed by normal rendering. */
+  async readBlockVisibility() {
+    this._check();
+    const total=this.state.blockCount;
+    if(!this.lastBlockCulling)return{enabled:false,total,candidateBlocks:total,candidateSplats:this.model.count};
+    const output=this.device.createBuffer({size:total*4,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST});
+    const encoder=this.device.createCommandEncoder();encoder.copyBufferToBuffer(this.state.blockVisible,0,output,0,total*4);this.device.queue.submit([encoder.finish()]);
+    try{await output.mapAsync(GPUMapMode.READ);const flags=new Uint32Array(output.getMappedRange());let candidateBlocks=0,candidateSplats=0;
+      for(let i=0;i<total;i++)if(flags[i]){candidateBlocks++;candidateSplats+=Math.min(256,this.model.count-i*256);}
+      return{enabled:true,total,candidateBlocks,candidateSplats};
+    }finally{output.destroy();}
   }
 
   /** Explicit profiling readback only; never needed by normal rendering. */
