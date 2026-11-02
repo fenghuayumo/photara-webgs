@@ -154,3 +154,70 @@ npm run test:gpu
 GPU 检查包含独立 CPU oracle 像素对比、两个模型与所有 filter 模式、非平凡外参和四元数、四种相机、数值 Jacobian、全景接缝、GUT 近相机覆盖、超过 256 个工作组的 radix prefix 和稳定排序、SH、readback padding、worker 加载取消及资源生命周期。
 
 测试结果及桌面/手机截图写入被 Git 忽略的 `test-results/`。开发服务与测试服务分别使用端口 4173 / 4174。
+
+
+## SOG v2
+
+文件选择、拖放与 `element.load()` 自动识别 `.ply` / `.sog`；URL 也支持
+非打包 SOG 的 `meta.json`，附属图像相对于该 URL 加载。单独的本地
+`meta.json` 不包含图像，请使用 `.sog` ZIP 包。
+
+```js
+await element.load('./scene.sog');
+await element.load('./scene/meta.json');
+// Browser / worker API; async because ZIP and raw image decoding are asynchronous.
+import { parseSog, ModelLoader } from './src/index.js';
+const model = await parseSog(buffer);
+```
+
+支持 SOG v2、ZIP STORE / DEFLATE、lossless WebP/PNG、SH degree 0–3、
+16-bit SH palette labels 和 `antialiased` 的 mip2d。按 Studio 导入约定将 SOG 的 RUB 坐标转换为 Photara RDF，旋转与 SH 同步转换。
+原始 RGBA 解码禁用颜色转换和 alpha 预乘，避免低透明度像素的数据损坏。
+解码在 module worker 内执行，依赖 OffscreenCanvas WebGL2 的原始像素读取；
+模型显示仍使用 WebGPU。SOG 压缩减少下载体积，展开后 GPU 数据量不变。
+不支持旧 SOG v1、v3、Streamed SOG/LOD、ZIP64、加密 ZIP 和 2DGS。
+
+标准 SOG 不记录 Photara 的 `3dgut` 方法，默认使用 `3dgs`；对于已知的
+GUT 模型，嵌入端应显式指定渲染方法。TEZOI 的场景配置保留了该模型的
+`3dgut + mip2d`。SOG 为有损量化格式，不承诺与原 PLY 逐像素相同。
+
+格式依据：https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/
+
+SOG 回归：`npm test`（数值与损坏数据），`npm run test:sog`（真实 WebP/PNG、ZIP、worker、GPU 出图），`npm run test:gpu`（既有渲染回归）。
+
+
+## 2026-11-02：GUT 与可见点管线优化
+
+默认启用针孔 GUT 的保守椭球覆盖边界与 GPU 稳定可见点压缩。
+压缩结果直接驱动 GPU 间接排序和绘制，延后 SH 到屏幕剔除后计算。
+完整 300 万点 SOG 的六组固定相机对照，RGBA8 与旧源码结果逐字节一致。
+实测计时、设备、复现命令和边界见 [本场景优化报告](docs/1023-gut-optimization.md)。
+
+```js
+renderer.render(camera); // 默认 compact:true, tightBounds:true
+renderer.render(camera, { compact:false, tightBounds:false }); // 对照覆盖/排序路径
+// 仅用于显式性能诊断，正常帧循环不需要 readback：
+await renderer.device.queue.onSubmittedWorkDone();
+console.log(await renderer.readTimings()); // profiling 开启时含 compact_ms
+console.log(await renderer.readVisibility()); // { visible, total }
+```
+
+本轮仅更新 WebGS，尚未同步 TEZOI。
+
+
+## 2026-11-02：GPU 内存优化
+
+SOG 默认保留高阶 SH 调色板并在 GPU 按索引读取，保持 Float32 精度；
+投影中间结构从 112 减为 96 bytes/点。当前完整 300 万点模型的 GPU 模型缓冲区
+从约 1,117.6 MB 降至 553.4 MB，六组固定视角与此前截图逐字节一致。
+详见 [GPU 内存报告](docs/1023-memory-optimization.md)。CPU 峰值内存本轮未降低。
+
+```js
+await renderer.setModel(model); // SOG 调色板精确还原且更小时自动采用
+await renderer.setModel(model, { shStorage:'float32' }); // 参考路径
+console.log(renderer.getMemoryUsage()); // 应用 buffer/texture 请求字节数，不是整个进程显存
+```
+
+`model.sh` 仍是 canonical Float32 数组。存在调色板时会核对高阶项，修改后不能精确还原
+则自动回退普通 Float32；没有调色板的 PLY 也获得投影结构的内存节省。
+本轮仍未同步 TEZOI。

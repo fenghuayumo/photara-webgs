@@ -12,9 +12,12 @@ export class PlyLoader {
       this.reject = reject;
       const done = () => { worker.terminate(); if (this.worker === worker) { this.worker = null; this.reject = null; } };
       worker.onmessage = ({ data }) => { if (data.id !== id) return; done(); if (data.error) reject(new Error(data.error)); else resolve(data.model); };
-      worker.onerror = event => { done(); reject(new Error(event.message || 'PLY worker failed')); };
+      worker.onerror = event => { done(); reject(new Error(event.message || 'Model worker failed')); };
       worker.postMessage({ id, buffer, options }, [buffer]);
     });
   }
   dispose() { this.cancel(); }
 }
+
+// Both loaders auto-detect PLY and SOG content.
+export { PlyLoader as ModelLoader };

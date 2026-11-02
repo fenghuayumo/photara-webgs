@@ -13,7 +13,6 @@ struct Projected {
     centerConic: vec4f, // center.xy, inverse covariance xx, xy
     color: vec4f,
     row0: vec4f, row1: vec4f, row2: vec4f,
-    extra: vec4f, // inverse covariance yy, validity
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
 const PI = 3.141592653589793;

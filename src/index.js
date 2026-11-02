@@ -1,3 +1,5 @@
+export { PlyLoader, ModelLoader } from './loader.js';
+export { parseSog, decodeSogPlanes, readSogArchive } from './sog.js';
 export { GaussianRenderer } from './renderer.js';
 export { GaussianViewer } from './viewer.js';
 export { parsePly } from './ply.js';

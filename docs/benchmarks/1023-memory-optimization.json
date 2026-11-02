@@ -1,0 +1,1047 @@
+{
+  "before": {
+    "info": {
+      "count": 3000000,
+      "load_ms": 6311,
+      "timestamp": true,
+      "memory": {
+        "modelBuffers": 1117595928
+      },
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "blackwell",
+        "description": ""
+      }
+    },
+    "errors": [],
+    "measurements": [
+      {
+        "name": "960-view0-pinhole",
+        "wall_ms": 3.700000047683716,
+        "stages": {
+          "compact_ms": 0.05744,
+          "rays_ms": 0,
+          "project_ms": 0.474912,
+          "sort_ms": 0.096064,
+          "draw_ms": 0.316416
+        },
+        "samples": [
+          {
+            "compact_ms": 0.057088,
+            "rays_ms": 0,
+            "project_ms": 0.474912,
+            "sort_ms": 0.096064,
+            "draw_ms": 0.316288
+          },
+          {
+            "compact_ms": 0.057568,
+            "rays_ms": 0,
+            "project_ms": 0.476064,
+            "sort_ms": 0.095552,
+            "draw_ms": 0.316416
+          },
+          {
+            "compact_ms": 0.057376,
+            "rays_ms": 0,
+            "project_ms": 0.473792,
+            "sort_ms": 0.096736,
+            "draw_ms": 0.316416
+          },
+          {
+            "compact_ms": 0.05744,
+            "rays_ms": 0,
+            "project_ms": 0.478816,
+            "sort_ms": 0.096256,
+            "draw_ms": 2.61248
+          },
+          {
+            "compact_ms": 0.059712,
+            "rays_ms": 0,
+            "project_ms": 0.475136,
+            "sort_ms": 0.096448,
+            "draw_ms": 0.337344
+          },
+          {
+            "compact_ms": 0.057088,
+            "rays_ms": 0,
+            "project_ms": 0.479936,
+            "sort_ms": 0.095904,
+            "draw_ms": 0.316672
+          },
+          {
+            "compact_ms": 0.057824,
+            "rays_ms": 0,
+            "project_ms": 0.472992,
+            "sort_ms": 0.096,
+            "draw_ms": 0.316032
+          },
+          {
+            "compact_ms": 0.05744,
+            "rays_ms": 0,
+            "project_ms": 0.433952,
+            "sort_ms": 0.096064,
+            "draw_ms": 0.318176
+          },
+          {
+            "compact_ms": 0.057504,
+            "rays_ms": 0,
+            "project_ms": 0.456832,
+            "sort_ms": 0.095968,
+            "draw_ms": 0.315936
+          }
+        ],
+        "stats": {
+          "visible": 34664,
+          "total": 3000000
+        },
+        "gpuErrors": []
+      },
+      {
+        "name": "960-view1-pinhole",
+        "wall_ms": 4.899999976158142,
+        "stages": {
+          "compact_ms": 0.057504,
+          "rays_ms": 0,
+          "project_ms": 0.48176,
+          "sort_ms": 0.103136,
+          "draw_ms": 0.357472
+        },
+        "samples": [
+          {
+            "compact_ms": 0.057504,
+            "rays_ms": 0,
+            "project_ms": 0.486656,
+            "sort_ms": 0.103296,
+            "draw_ms": 0.357824
+          },
+          {
+            "compact_ms": 0.057216,
+            "rays_ms": 0,
+            "project_ms": 0.484608,
+            "sort_ms": 0.104288,
+            "draw_ms": 0.356576
+          },
+          {
+            "compact_ms": 0.057344,
+            "rays_ms": 0,
+            "project_ms": 0.48176,
+            "sort_ms": 0.102944,
+            "draw_ms": 0.358144
+          },
+          {
+            "compact_ms": 0.05792,
+            "rays_ms": 0,
+            "project_ms": 0.483904,
+            "sort_ms": 0.102976,
+            "draw_ms": 0.357696
+          },
+          {
+            "compact_ms": 0.0568,
+            "rays_ms": 0,
+            "project_ms": 0.478848,
+            "sort_ms": 0.10304,
+            "draw_ms": 0.355776
+          },
+          {
+            "compact_ms": 0.05776,
+            "rays_ms": 0,
+            "project_ms": 0.477216,
+            "sort_ms": 0.103136,
+            "draw_ms": 0.357472
+          },
+          {
+            "compact_ms": 0.056992,
+            "rays_ms": 0,
+            "project_ms": 0.477408,
+            "sort_ms": 0.10368,
+            "draw_ms": 0.357344
+          },
+          {
+            "compact_ms": 0.057664,
+            "rays_ms": 0,
+            "project_ms": 2.672448,
+            "sort_ms": 0.104416,
+            "draw_ms": 0.358112
+          },
+          {
+            "compact_ms": 0.0576,
+            "rays_ms": 0,
+            "project_ms": 0.475168,
+            "sort_ms": 0.10288,
+            "draw_ms": 0.355456
+          }
+        ],
+        "stats": {
+          "visible": 48419,
+          "total": 3000000
+        },
+        "gpuErrors": []
+      },
+      {
+        "name": "960-view2-pinhole",
+        "wall_ms": 3.799999952316284,
+        "stages": {
+          "compact_ms": 0.056544,
+          "rays_ms": 0,
+          "project_ms": 0.47136,
+          "sort_ms": 0.095488,
+          "draw_ms": 0.302752
+        },
+        "samples": [
+          {
+            "compact_ms": 0.056256,
+            "rays_ms": 0,
+            "project_ms": 0.473728,
+            "sort_ms": 0.095648,
+            "draw_ms": 0.30288
+          },
+          {
+            "compact_ms": 0.05632,
+            "rays_ms": 0,
+            "project_ms": 0.471712,
+            "sort_ms": 0.095488,
+            "draw_ms": 0.302464
+          },
+          {
+            "compact_ms": 0.05648,
+            "rays_ms": 0,
+            "project_ms": 0.472768,
+            "sort_ms": 0.094016,
+            "draw_ms": 0.302752
+          },
+          {
+            "compact_ms": 0.0576,
+            "rays_ms": 0,
+            "project_ms": 0.468352,
+            "sort_ms": 0.09488,
+            "draw_ms": 0.3024
+          },
+          {
+            "compact_ms": 0.056544,
+            "rays_ms": 0,
+            "project_ms": 2.666784,
+            "sort_ms": 0.095616,
+            "draw_ms": 0.30416
+          },
+          {
+            "compact_ms": 0.057056,
+            "rays_ms": 0,
+            "project_ms": 0.47136,
+            "sort_ms": 0.0952,
+            "draw_ms": 0.303136
+          },
+          {
+            "compact_ms": 0.0576,
+            "rays_ms": 0,
+            "project_ms": 0.467424,
+            "sort_ms": 0.096,
+            "draw_ms": 0.302208
+          },
+          {
+            "compact_ms": 0.056544,
+            "rays_ms": 0,
+            "project_ms": 0.470112,
+            "sort_ms": 0.094528,
+            "draw_ms": 0.303872
+          },
+          {
+            "compact_ms": 0.05744,
+            "rays_ms": 0,
+            "project_ms": 0.469632,
+            "sort_ms": 1.546336,
+            "draw_ms": 0.301216
+          }
+        ],
+        "stats": {
+          "visible": 14295,
+          "total": 3000000
+        },
+        "gpuErrors": []
+      },
+      {
+        "name": "1440-view0-pinhole",
+        "wall_ms": 4.799999952316284,
+        "stages": {
+          "compact_ms": 0.057184,
+          "rays_ms": 0,
+          "project_ms": 0.47712,
+          "sort_ms": 0.095872,
+          "draw_ms": 0.664416
+        },
+        "samples": [
+          {
+            "compact_ms": 0.056384,
+            "rays_ms": 0,
+            "project_ms": 0.481376,
+            "sort_ms": 0.095872,
+            "draw_ms": 0.664544
+          },
+          {
+            "compact_ms": 0.057184,
+            "rays_ms": 0,
+            "project_ms": 0.476704,
+            "sort_ms": 0.096352,
+            "draw_ms": 0.663936
+          },
+          {
+            "compact_ms": 0.057056,
+            "rays_ms": 0,
+            "project_ms": 0.475136,
+            "sort_ms": 0.09632,
+            "draw_ms": 3.10368
+          },
+          {
+            "compact_ms": 0.05744,
+            "rays_ms": 0,
+            "project_ms": 0.483584,
+            "sort_ms": 0.09664,
+            "draw_ms": 0.664416
+          },
+          {
+            "compact_ms": 0.057536,
+            "rays_ms": 0,
+            "project_ms": 0.482848,
+            "sort_ms": 0.095776,
+            "draw_ms": 0.665056
+          },
+          {
+            "compact_ms": 0.057664,
+            "rays_ms": 0,
+            "project_ms": 0.48048,
+            "sort_ms": 0.095808,
+            "draw_ms": 0.664608
+          },
+          {
+            "compact_ms": 0.057088,
+            "rays_ms": 0,
+            "project_ms": 0.47712,
+            "sort_ms": 0.095008,
+            "draw_ms": 0.664
+          },
+          {
+            "compact_ms": 0.057696,
+            "rays_ms": 0,
+            "project_ms": 0.474912,
+            "sort_ms": 0.097824,
+            "draw_ms": 0.664128
+          },
+          {
+            "compact_ms": 0.05712,
+            "rays_ms": 0,
+            "project_ms": 0.468768,
+            "sort_ms": 0.0952,
+            "draw_ms": 0.662912
+          }
+        ],
+        "stats": {
+          "visible": 34617,
+          "total": 3000000
+        },
+        "gpuErrors": []
+      },
+      {
+        "name": "1440-view1-pinhole",
+        "wall_ms": 3.899999976158142,
+        "stages": {
+          "compact_ms": 0.05744,
+          "rays_ms": 0,
+          "project_ms": 0.461696,
+          "sort_ms": 0.104192,
+          "draw_ms": 0.739968
+        },
+        "samples": [
+          {
+            "compact_ms": 0.057152,
+            "rays_ms": 0,
+            "project_ms": 0.461696,
+            "sort_ms": 0.104224,
+            "draw_ms": 0.739968
+          },
+          {
+            "compact_ms": 0.057376,
+            "rays_ms": 0,
+            "project_ms": 0.449888,
+            "sort_ms": 0.103776,
+            "draw_ms": 0.73952
+          },
+          {
+            "compact_ms": 0.057664,
+            "rays_ms": 0,
+            "project_ms": 0.46176,
+            "sort_ms": 0.104192,
+            "draw_ms": 0.739552
+          },
+          {
+            "compact_ms": 0.057376,
+            "rays_ms": 0,
+            "project_ms": 0.462144,
+            "sort_ms": 0.10368,
+            "draw_ms": 0.739456
+          },
+          {
+            "compact_ms": 0.05728,
+            "rays_ms": 0,
+            "project_ms": 0.46064,
+            "sort_ms": 0.104352,
+            "draw_ms": 0.739552
+          },
+          {
+            "compact_ms": 0.057952,
+            "rays_ms": 0,
+            "project_ms": 0.459488,
+            "sort_ms": 0.103904,
+            "draw_ms": 0.741024
+          },
+          {
+            "compact_ms": 0.057856,
+            "rays_ms": 0,
+            "project_ms": 0.462112,
+            "sort_ms": 0.10464,
+            "draw_ms": 0.740128
+          },
+          {
+            "compact_ms": 0.05744,
+            "rays_ms": 0,
+            "project_ms": 0.461024,
+            "sort_ms": 0.103424,
+            "draw_ms": 0.7416
+          },
+          {
+            "compact_ms": 0.057632,
+            "rays_ms": 0,
+            "project_ms": 0.463968,
+            "sort_ms": 0.104384,
+            "draw_ms": 0.740256
+          }
+        ],
+        "stats": {
+          "visible": 48361,
+          "total": 3000000
+        },
+        "gpuErrors": []
+      },
+      {
+        "name": "1440-view2-pinhole",
+        "wall_ms": 5,
+        "stages": {
+          "compact_ms": 0.057056,
+          "rays_ms": 0,
+          "project_ms": 0.452064,
+          "sort_ms": 0.09456,
+          "draw_ms": 0.649984
+        },
+        "samples": [
+          {
+            "compact_ms": 0.057824,
+            "rays_ms": 0,
+            "project_ms": 0.445664,
+            "sort_ms": 0.09456,
+            "draw_ms": 0.65088
+          },
+          {
+            "compact_ms": 0.057504,
+            "rays_ms": 0,
+            "project_ms": 0.450784,
+            "sort_ms": 0.095648,
+            "draw_ms": 0.649696
+          },
+          {
+            "compact_ms": 0.057056,
+            "rays_ms": 0,
+            "project_ms": 0.453504,
+            "sort_ms": 0.09456,
+            "draw_ms": 0.650816
+          },
+          {
+            "compact_ms": 0.056928,
+            "rays_ms": 0,
+            "project_ms": 0.453088,
+            "sort_ms": 0.095584,
+            "draw_ms": 0.64928
+          },
+          {
+            "compact_ms": 0.056032,
+            "rays_ms": 0,
+            "project_ms": 0.453216,
+            "sort_ms": 0.093824,
+            "draw_ms": 0.64976
+          },
+          {
+            "compact_ms": 0.0568,
+            "rays_ms": 0,
+            "project_ms": 0.4512,
+            "sort_ms": 0.095744,
+            "draw_ms": 0.649824
+          },
+          {
+            "compact_ms": 0.057536,
+            "rays_ms": 0,
+            "project_ms": 0.452064,
+            "sort_ms": 0.094144,
+            "draw_ms": 0.649984
+          },
+          {
+            "compact_ms": 0.057184,
+            "rays_ms": 0,
+            "project_ms": 0.449344,
+            "sort_ms": 0.0968,
+            "draw_ms": 0.650848
+          },
+          {
+            "compact_ms": 0.056544,
+            "rays_ms": 0,
+            "project_ms": 0.454944,
+            "sort_ms": 0.094336,
+            "draw_ms": 0.650432
+          }
+        ],
+        "stats": {
+          "visible": 14274,
+          "total": 3000000
+        },
+        "gpuErrors": []
+      }
+    ]
+  },
+  "after": {
+    "info": {
+      "count": 3000000,
+      "load_ms": 6471.600000023842,
+      "timestamp": true,
+      "memory": {
+        "attributes": 144000000,
+        "sh": 59786220,
+        "projected": 288000000,
+        "modelBuffers": 553382148,
+        "controlBuffers": 240,
+        "textures": 0,
+        "total": 553382388,
+        "shFormat": "palette"
+      },
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "blackwell",
+        "description": ""
+      }
+    },
+    "errors": [],
+    "measurements": [
+      {
+        "name": "960-view0-pinhole",
+        "wall_ms": 4.5,
+        "stages": {
+          "compact_ms": 0.058176,
+          "rays_ms": 0,
+          "project_ms": 0.41936,
+          "sort_ms": 0.096,
+          "draw_ms": 0.312608
+        },
+        "samples": [
+          {
+            "compact_ms": 0.058528,
+            "rays_ms": 0,
+            "project_ms": 0.412704,
+            "sort_ms": 0.096128,
+            "draw_ms": 0.312576
+          },
+          {
+            "compact_ms": 0.057856,
+            "rays_ms": 0,
+            "project_ms": 0.416,
+            "sort_ms": 0.094816,
+            "draw_ms": 0.312768
+          },
+          {
+            "compact_ms": 0.058656,
+            "rays_ms": 0,
+            "project_ms": 0.4192,
+            "sort_ms": 0.09648,
+            "draw_ms": 0.71488
+          },
+          {
+            "compact_ms": 0.057152,
+            "rays_ms": 0,
+            "project_ms": 0.41936,
+            "sort_ms": 0.0944,
+            "draw_ms": 0.313056
+          },
+          {
+            "compact_ms": 0.058176,
+            "rays_ms": 0,
+            "project_ms": 0.42096,
+            "sort_ms": 0.09648,
+            "draw_ms": 0.312
+          },
+          {
+            "compact_ms": 0.058432,
+            "rays_ms": 0,
+            "project_ms": 0.41968,
+            "sort_ms": 0.095808,
+            "draw_ms": 0.312608
+          },
+          {
+            "compact_ms": 0.059168,
+            "rays_ms": 0,
+            "project_ms": 0.422016,
+            "sort_ms": 0.096096,
+            "draw_ms": 0.737824
+          },
+          {
+            "compact_ms": 0.058176,
+            "rays_ms": 0,
+            "project_ms": 0.417408,
+            "sort_ms": 0.094688,
+            "draw_ms": 0.31216
+          },
+          {
+            "compact_ms": 0.057984,
+            "rays_ms": 0,
+            "project_ms": 0.426656,
+            "sort_ms": 0.096,
+            "draw_ms": 0.312288
+          }
+        ],
+        "stats": {
+          "visible": 34664,
+          "total": 3000000
+        },
+        "gpuErrors": [],
+        "diff": {
+          "maxByte": 0,
+          "mae": 0,
+          "changedChannels": 0
+        }
+      },
+      {
+        "name": "960-view1-pinhole",
+        "wall_ms": 4.399999976158142,
+        "stages": {
+          "compact_ms": 0.058432,
+          "rays_ms": 0,
+          "project_ms": 0.42576,
+          "sort_ms": 0.10368,
+          "draw_ms": 0.35168
+        },
+        "samples": [
+          {
+            "compact_ms": 0.059296,
+            "rays_ms": 0,
+            "project_ms": 0.377952,
+            "sort_ms": 0.102912,
+            "draw_ms": 0.353728
+          },
+          {
+            "compact_ms": 0.05824,
+            "rays_ms": 0,
+            "project_ms": 0.418592,
+            "sort_ms": 0.104512,
+            "draw_ms": 0.35104
+          },
+          {
+            "compact_ms": 0.058144,
+            "rays_ms": 0,
+            "project_ms": 0.42048,
+            "sort_ms": 0.102688,
+            "draw_ms": 0.35168
+          },
+          {
+            "compact_ms": 0.058784,
+            "rays_ms": 0,
+            "project_ms": 0.427584,
+            "sort_ms": 0.104608,
+            "draw_ms": 0.353024
+          },
+          {
+            "compact_ms": 0.058432,
+            "rays_ms": 0,
+            "project_ms": 0.42576,
+            "sort_ms": 0.103072,
+            "draw_ms": 0.35168
+          },
+          {
+            "compact_ms": 0.058176,
+            "rays_ms": 0,
+            "project_ms": 0.429312,
+            "sort_ms": 0.10512,
+            "draw_ms": 0.350464
+          },
+          {
+            "compact_ms": 0.05856,
+            "rays_ms": 0,
+            "project_ms": 0.423264,
+            "sort_ms": 0.103232,
+            "draw_ms": 0.351616
+          },
+          {
+            "compact_ms": 0.05904,
+            "rays_ms": 0,
+            "project_ms": 1.745696,
+            "sort_ms": 0.104576,
+            "draw_ms": 0.35328
+          },
+          {
+            "compact_ms": 0.058272,
+            "rays_ms": 0,
+            "project_ms": 0.428256,
+            "sort_ms": 0.10368,
+            "draw_ms": 0.351584
+          }
+        ],
+        "stats": {
+          "visible": 48419,
+          "total": 3000000
+        },
+        "gpuErrors": [],
+        "diff": {
+          "maxByte": 0,
+          "mae": 0,
+          "changedChannels": 0
+        }
+      },
+      {
+        "name": "960-view2-pinhole",
+        "wall_ms": 4,
+        "stages": {
+          "compact_ms": 0.057792,
+          "rays_ms": 0,
+          "project_ms": 0.420288,
+          "sort_ms": 0.094944,
+          "draw_ms": 0.298656
+        },
+        "samples": [
+          {
+            "compact_ms": 0.057792,
+            "rays_ms": 0,
+            "project_ms": 0.415744,
+            "sort_ms": 0.095008,
+            "draw_ms": 0.299264
+          },
+          {
+            "compact_ms": 0.05776,
+            "rays_ms": 0,
+            "project_ms": 0.420288,
+            "sort_ms": 0.094368,
+            "draw_ms": 0.298688
+          },
+          {
+            "compact_ms": 0.05856,
+            "rays_ms": 0,
+            "project_ms": 0.41872,
+            "sort_ms": 0.095776,
+            "draw_ms": 0.298336
+          },
+          {
+            "compact_ms": 0.057664,
+            "rays_ms": 0,
+            "project_ms": 0.42,
+            "sort_ms": 0.09408,
+            "draw_ms": 0.29856
+          },
+          {
+            "compact_ms": 0.057568,
+            "rays_ms": 0,
+            "project_ms": 0.420288,
+            "sort_ms": 0.095136,
+            "draw_ms": 0.30016
+          },
+          {
+            "compact_ms": 0.057088,
+            "rays_ms": 0,
+            "project_ms": 0.422048,
+            "sort_ms": 0.093984,
+            "draw_ms": 0.29792
+          },
+          {
+            "compact_ms": 0.058144,
+            "rays_ms": 0,
+            "project_ms": 0.420864,
+            "sort_ms": 0.096,
+            "draw_ms": 0.298656
+          },
+          {
+            "compact_ms": 0.058528,
+            "rays_ms": 0,
+            "project_ms": 0.415872,
+            "sort_ms": 0.094624,
+            "draw_ms": 0.297152
+          },
+          {
+            "compact_ms": 0.058176,
+            "rays_ms": 0,
+            "project_ms": 2.603456,
+            "sort_ms": 0.094944,
+            "draw_ms": 0.298656
+          }
+        ],
+        "stats": {
+          "visible": 14295,
+          "total": 3000000
+        },
+        "gpuErrors": [],
+        "diff": {
+          "maxByte": 0,
+          "mae": 0,
+          "changedChannels": 0
+        }
+      },
+      {
+        "name": "1440-view0-pinhole",
+        "wall_ms": 5,
+        "stages": {
+          "compact_ms": 0.058688,
+          "rays_ms": 0,
+          "project_ms": 0.4208,
+          "sort_ms": 0.095744,
+          "draw_ms": 0.654272
+        },
+        "samples": [
+          {
+            "compact_ms": 0.058688,
+            "rays_ms": 0,
+            "project_ms": 0.407456,
+            "sort_ms": 0.095232,
+            "draw_ms": 0.65632
+          },
+          {
+            "compact_ms": 0.058912,
+            "rays_ms": 0,
+            "project_ms": 0.423584,
+            "sort_ms": 0.097024,
+            "draw_ms": 0.65424
+          },
+          {
+            "compact_ms": 0.058656,
+            "rays_ms": 0,
+            "project_ms": 0.405184,
+            "sort_ms": 0.094976,
+            "draw_ms": 3.231104
+          },
+          {
+            "compact_ms": 0.058112,
+            "rays_ms": 0,
+            "project_ms": 0.4208,
+            "sort_ms": 0.097088,
+            "draw_ms": 0.65408
+          },
+          {
+            "compact_ms": 0.058784,
+            "rays_ms": 0,
+            "project_ms": 0.417376,
+            "sort_ms": 0.095744,
+            "draw_ms": 0.656096
+          },
+          {
+            "compact_ms": 0.058304,
+            "rays_ms": 0,
+            "project_ms": 0.425536,
+            "sort_ms": 0.09648,
+            "draw_ms": 0.65456
+          },
+          {
+            "compact_ms": 0.058272,
+            "rays_ms": 0,
+            "project_ms": 3.047776,
+            "sort_ms": 0.09456,
+            "draw_ms": 0.654208
+          },
+          {
+            "compact_ms": 0.058816,
+            "rays_ms": 0,
+            "project_ms": 0.377152,
+            "sort_ms": 0.096544,
+            "draw_ms": 0.65392
+          },
+          {
+            "compact_ms": 0.058752,
+            "rays_ms": 0,
+            "project_ms": 0.423264,
+            "sort_ms": 0.09488,
+            "draw_ms": 0.654272
+          }
+        ],
+        "stats": {
+          "visible": 34617,
+          "total": 3000000
+        },
+        "gpuErrors": [],
+        "diff": {
+          "maxByte": 0,
+          "mae": 0,
+          "changedChannels": 0
+        }
+      },
+      {
+        "name": "1440-view1-pinhole",
+        "wall_ms": 5,
+        "stages": {
+          "compact_ms": 0.058592,
+          "rays_ms": 0,
+          "project_ms": 0.425696,
+          "sort_ms": 0.104832,
+          "draw_ms": 0.730912
+        },
+        "samples": [
+          {
+            "compact_ms": 2.24896,
+            "rays_ms": 0,
+            "project_ms": 0.424384,
+            "sort_ms": 0.104832,
+            "draw_ms": 0.730912
+          },
+          {
+            "compact_ms": 0.058048,
+            "rays_ms": 0,
+            "project_ms": 0.427904,
+            "sort_ms": 0.102592,
+            "draw_ms": 0.730496
+          },
+          {
+            "compact_ms": 0.058624,
+            "rays_ms": 0,
+            "project_ms": 0.427552,
+            "sort_ms": 0.104672,
+            "draw_ms": 0.730336
+          },
+          {
+            "compact_ms": 0.058688,
+            "rays_ms": 0,
+            "project_ms": 0.383584,
+            "sort_ms": 3.595744,
+            "draw_ms": 0.73216
+          },
+          {
+            "compact_ms": 0.058624,
+            "rays_ms": 0,
+            "project_ms": 0.425696,
+            "sort_ms": 0.105216,
+            "draw_ms": 0.730304
+          },
+          {
+            "compact_ms": 0.058592,
+            "rays_ms": 0,
+            "project_ms": 0.426208,
+            "sort_ms": 0.10304,
+            "draw_ms": 0.731392
+          },
+          {
+            "compact_ms": 0.057824,
+            "rays_ms": 0,
+            "project_ms": 0.426976,
+            "sort_ms": 0.10496,
+            "draw_ms": 3.00384
+          },
+          {
+            "compact_ms": 0.058208,
+            "rays_ms": 0,
+            "project_ms": 0.40864,
+            "sort_ms": 0.102624,
+            "draw_ms": 0.731232
+          },
+          {
+            "compact_ms": 0.058368,
+            "rays_ms": 0,
+            "project_ms": 0.425312,
+            "sort_ms": 0.105088,
+            "draw_ms": 0.730528
+          }
+        ],
+        "stats": {
+          "visible": 48361,
+          "total": 3000000
+        },
+        "gpuErrors": [],
+        "diff": {
+          "maxByte": 0,
+          "mae": 0,
+          "changedChannels": 0
+        }
+      },
+      {
+        "name": "1440-view2-pinhole",
+        "wall_ms": 5,
+        "stages": {
+          "compact_ms": 0.057696,
+          "rays_ms": 0,
+          "project_ms": 0.418144,
+          "sort_ms": 0.095008,
+          "draw_ms": 0.642016
+        },
+        "samples": [
+          {
+            "compact_ms": 0.057696,
+            "rays_ms": 0,
+            "project_ms": 0.409408,
+            "sort_ms": 0.095008,
+            "draw_ms": 0.641984
+          },
+          {
+            "compact_ms": 0.057472,
+            "rays_ms": 0,
+            "project_ms": 0.4176,
+            "sort_ms": 0.095552,
+            "draw_ms": 0.642208
+          },
+          {
+            "compact_ms": 0.05792,
+            "rays_ms": 0,
+            "project_ms": 0.417984,
+            "sort_ms": 0.094112,
+            "draw_ms": 0.642784
+          },
+          {
+            "compact_ms": 0.057408,
+            "rays_ms": 0,
+            "project_ms": 0.423776,
+            "sort_ms": 0.094464,
+            "draw_ms": 0.641312
+          },
+          {
+            "compact_ms": 0.059104,
+            "rays_ms": 0,
+            "project_ms": 2.28624,
+            "sort_ms": 0.094432,
+            "draw_ms": 0.641824
+          },
+          {
+            "compact_ms": 0.057952,
+            "rays_ms": 0,
+            "project_ms": 0.42048,
+            "sort_ms": 0.095808,
+            "draw_ms": 0.642016
+          },
+          {
+            "compact_ms": 0.057696,
+            "rays_ms": 0,
+            "project_ms": 0.42352,
+            "sort_ms": 0.093632,
+            "draw_ms": 0.641856
+          },
+          {
+            "compact_ms": 0.057312,
+            "rays_ms": 0,
+            "project_ms": 0.418144,
+            "sort_ms": 0.095488,
+            "draw_ms": 2.828192
+          },
+          {
+            "compact_ms": 0.057216,
+            "rays_ms": 0,
+            "project_ms": 0.413664,
+            "sort_ms": 0.095616,
+            "draw_ms": 0.642592
+          }
+        ],
+        "stats": {
+          "visible": 14274,
+          "total": 3000000
+        },
+        "gpuErrors": [],
+        "diff": {
+          "maxByte": 0,
+          "mae": 0,
+          "changedChannels": 0
+        }
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { prepareSHStorage } from './gpu-storage.js';
 import { validateModel, FILTER_MODES, RENDER_METHODS } from './model.js';
 import { validateCamera, cameraPosition, CAMERA_MODELS } from './camera.js';
 
@@ -38,7 +39,7 @@ export class GaussianRenderer {
     if (!this.context) throw new Error('Canvas 无法创建 WebGPU 上下文。');
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
-    const names = ['common', 'project', 'draw', 'radix', 'rays'];
+    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact'];
     const sources = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`./shaders/${name}.wgsl`, import.meta.url));
       if (!response.ok) throw new Error(`Shader ${name}: HTTP ${response.status}`);
@@ -51,24 +52,30 @@ export class GaussianRenderer {
       if (errors.length) throw new Error(`${label}: ${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
       return shader;
     };
-    const [projection, draw, radix, blit, rays] = await Promise.all([
+    const [projection, draw, radix, blit, rays, compactShader] = await Promise.all([
       module('Photara projection', sources[0] + sources[1]),
       module('Photara draw', sources[0] + sources[2]),
-      module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]),
+      module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]), module('Visible compaction', sources[0] + sources[5]),
     ]);
     this.uniform = device.createBuffer({ label: 'CV camera', size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     if (this.profiling) {
-      this.timestampQueries = device.createQuerySet({ type: 'timestamp', count: 8 });
-      this.timestampBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      this.timestampQueries = device.createQuerySet({ type: 'timestamp', count: 10 });
+      this.timestampBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
     }
     this.sortLayout = device.createBindGroupLayout({ entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 16 } },
       ...Array.from({ length: 6 }, (_, i) => ({ binding: i + 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: i === 0 ? 'read-only-storage' : 'storage' } })),
     ] });
     const sortPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sortLayout] });
+    this.compactLayout = device.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ...Array.from({ length: 7 }, (_, i) => ({ binding: i + 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: i === 0 ? 'read-only-storage' : 'storage' } })),
+    ] });
+    const compactLayout = device.createPipelineLayout({ bindGroupLayouts: [this.compactLayout] });
     device.pushErrorScope('validation');
     try {
       this.projectPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: projection, entryPoint: 'main' } });
+      this.compactPipelines = await Promise.all(['countMain', 'prefixMain', 'scatterMain'].map(entryPoint => device.createComputePipelineAsync({ layout: compactLayout, compute: { module: compactShader, entryPoint } })));
       this.rayPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: rays, entryPoint: 'main' } });
       this.sortPipelines = await Promise.all(['histogramMain', 'prefixMain', 'scatterMain'].map(entryPoint => device.createComputePipelineAsync({ layout: sortPipelineLayout, compute: { module: radix, entryPoint } })));
       this.drawPipeline = await device.createRenderPipelineAsync({
@@ -89,11 +96,12 @@ export class GaussianRenderer {
   _check() { if (this.disposed || this.lost) throw new Error('Renderer is disposed or its GPU device was lost'); }
 
   /** Canonical model buffers; atomically replaces the previous GPU model. */
-  async setModel(model) {
+  async setModel(model, { shStorage = 'auto' } = {}) {
     this._check(); validateModel(model);
+    const packedSH = prepareSHStorage(model, shStorage);
     const d = this.device, n = model.count, groups = Math.ceil(n / 256);
     const max = Math.min(d.limits.maxStorageBufferBindingSize, d.limits.maxBufferSize);
-    for (const size of [n * 112, model.sh.byteLength, model.data.byteLength]) if (size > max) throw new Error(`模型超出此设备单个 GPU buffer 的限制（${Math.floor(max / 1048576)} MiB）。`);
+    for (const size of [n * 96, packedSH.data.byteLength, model.data.byteLength]) if (size > max) throw new Error(`模型超出此设备单个 GPU buffer 的限制（${Math.floor(max / 1048576)} MiB）。`);
     if (groups > d.limits.maxComputeWorkgroupsPerDimension) throw new Error('Model exceeds GPU dispatch limits');
     const buffers = [];
     const buffer = (label, size, initial, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC) => {
@@ -106,18 +114,21 @@ export class GaussianRenderer {
     let state, failure;
     try {
       const attributes = buffer('Activated Gaussians', model.data.byteLength, model.data);
-      const sh = buffer('INRIA SH', model.sh.byteLength, model.sh);
-      const projected = buffer('Projected Gaussians', n * 112);
+      const sh = buffer(`INRIA SH (${packedSH.format})`, packedSH.data.byteLength, packedSH.data);
+      const projected = buffer('Projected Gaussians', n * 96);
       const keys = [buffer('Keys A', n * 8), buffer('Keys B', n * 8)];
       const ranks = buffer('Local radix ranks', n * 4);
       const hist = buffer('Radix histogram', groups * 16 * 4), prefixes = buffer('Radix prefixes', groups * 16 * 4), totals = buffer('Radix totals', 64);
       const params = new Uint32Array(8 * 64);
       for (let i = 0; i < 8; i++) params.set([n, i * 4, groups, 0], i * 64);
-      const sortParams = buffer('Radix parameters', params.byteLength, params, GPUBufferUsage.UNIFORM);
+      const sortParams = buffer('Radix parameters', params.byteLength, params, GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
       const bind = (layout, list) => d.createBindGroup({ layout, entries: list.map((b, binding) => ({ binding, resource: { buffer: b } })) });
       const projectGroup = bind(this.projectPipeline.getBindGroupLayout(0), [this.uniform, attributes, sh, projected, keys[0]]);
       const sortGroups = [0, 1].map(i => d.createBindGroup({ layout: this.sortLayout, entries: [sortParams, keys[i], keys[1 - i], ranks, hist, prefixes, totals].map((b, binding) => ({ binding, resource: { buffer: b, ...(binding === 0 ? { size: 16 } : {}) } })) }));
-      state = { buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
+      const counts = buffer('Visible block counts', groups * 4), offsets = buffer('Visible block offsets', groups * 4);
+      const indirect = buffer('Visible indirect arguments', 32, null, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC);
+      const compactGroup = bind(this.compactLayout, [this.uniform, keys[0], keys[1], ranks, counts, offsets, sortParams, indirect]);
+      state = { memory: { attributes: model.data.byteLength, sh: packedSH.data.byteLength, projected: n * 96 }, sortParams, params, compactGroup, indirect, buffers, groups, keys, projected, projectGroup, drawGroup: null, sortGroups };
     } catch (error) { failure = error; }
     const validation = await d.popErrorScope(), memory = await d.popErrorScope();
     if (failure || validation || memory || this.disposed) {
@@ -127,7 +138,7 @@ export class GaussianRenderer {
     this.resources.forEach(b => b.destroy());
     this.resources = buffers; this.state = state;
     // Retain only metadata on the renderer; the viewer may release CPU arrays.
-    this.model = { count: n, bases: model.bases, degree: Math.sqrt(model.bases) - 1, renderMethod: model.renderMethod, filterMode: model.filterMode };
+    this.model = { shFormat: packedSH.format, count: n, bases: model.bases, degree: Math.sqrt(model.bases) - 1, renderMethod: model.renderMethod, filterMode: model.filterMode };
   }
 
   _resize(width, height) {
@@ -152,7 +163,7 @@ export class GaussianRenderer {
     if (this.state) this.state.drawGroup = null;
   }
 
-  render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1 } = {}) {
+  render(camera, { renderMethod = this.model?.renderMethod, filterMode = this.model?.filterMode, background = [0.035, 0.055, 0.07], scaleModifier = 1, tightBounds = true, compact = true } = {}) {
     this._check();
     if (!this.model) throw new Error('Load a model before rendering');
     validateCamera(camera);
@@ -163,18 +174,21 @@ export class GaussianRenderer {
     const nonlinearGut = renderMethod === '3dgut' && CAMERA_MODELS[camera.model] >= 2;
     if (nonlinearGut) this._ensureRays(width, height);
     else if (!this.rayTexture) this._ensureRays(1, 1);
+    if (this.state.drawCompact !== compact) { this.state.drawGroup = null; this.state.drawCompact = compact; }
     if (!this.state.drawGroup) this.state.drawGroup = this.device.createBindGroup({ layout: this.drawPipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.state.projected } },
-      { binding: 2, resource: { buffer: this.state.keys[0] } }, { binding: 3, resource: this.rayTexture.createView() },
+      { binding: 2, resource: { buffer: this.state.keys[compact ? 1 : 0] } }, { binding: 3, resource: this.rayTexture.createView() },
     ] });
     const bytes = new ArrayBuffer(160), f = new Float32Array(bytes), u = new Uint32Array(bytes);
     f.set(camera.worldToCamera, 0); f.set(camera.position || cameraPosition(camera.worldToCamera), 16);
     f.set([camera.fx, camera.fy, camera.cx, camera.cy], 20);
     f.set([width, height, camera.near ?? .2, scaleModifier], 24);
     u.set([this.model.count, this.model.bases, RENDER_METHODS.indexOf(renderMethod), FILTER_MODES.indexOf(filterMode)], 28);
-    u.set([CAMERA_MODELS[camera.model ?? 'pinhole'], this.model.degree, 0, 0], 32);
+    u.set([CAMERA_MODELS[camera.model ?? 'pinhole'], this.model.degree, tightBounds ? 1 : 0, this.model.shFormat === 'palette' ? 1 : 0], 32);
     f.set(camera.distortion || [0, 0, 0, 0], 36);
     this.device.queue.writeBuffer(this.uniform, 0, bytes);
+    if (!compact) this.device.queue.writeBuffer(this.state.sortParams, 0, this.state.params);
+    this.lastCompact = compact;
     const encoder = this.device.createCommandEncoder({ label: 'Photara Gaussian frame' });
     const timestamps = (begin, end) => this.profiling && (begin !== undefined || end !== undefined) ? { timestampWrites: {
       querySet: this.timestampQueries, ...(begin === undefined ? {} : { beginningOfPassWriteIndex: begin }),
@@ -188,18 +202,27 @@ export class GaussianRenderer {
     }
     let pass = encoder.beginComputePass(timestamps(2, 3));
     pass.setPipeline(this.projectPipeline); pass.setBindGroup(0, this.state.projectGroup); pass.dispatchWorkgroups(this.state.groups); pass.end();
+    if (compact) for (let stage = 0; stage < 3; stage++) {
+      pass = encoder.beginComputePass(timestamps(stage === 0 ? 8 : undefined, stage === 2 ? 9 : undefined));
+      pass.setPipeline(this.compactPipelines[stage]); pass.setBindGroup(0, this.state.compactGroup);
+      pass.dispatchWorkgroups(stage === 1 ? 1 : this.state.groups); pass.end();
+    }
     // Separate passes give explicit storage-write/read synchronization.
     for (let i = 0; i < 8; i++) for (let stage = 0; stage < 3; stage++) {
       pass = encoder.beginComputePass(timestamps(i === 0 && stage === 0 ? 4 : undefined, i === 7 && stage === 2 ? 5 : undefined));
-      pass.setPipeline(this.sortPipelines[stage]); pass.setBindGroup(0, this.state.sortGroups[i % 2], [i * 256]);
-      pass.dispatchWorkgroups(stage === 1 ? 16 : this.state.groups); pass.end();
+      pass.setPipeline(this.sortPipelines[stage]); pass.setBindGroup(0, this.state.sortGroups[compact ? 1 - i % 2 : i % 2], [i * 256]);
+      if (stage !== 1 && compact) pass.dispatchWorkgroupsIndirect(this.state.indirect, 16);
+      else pass.dispatchWorkgroups(stage === 1 ? 16 : this.state.groups);
+      pass.end();
     }
     pass = encoder.beginRenderPass({ ...timestamps(6, 7), colorAttachments: [{ view: this.texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [...background, 1] }] });
     pass.setPipeline(this.drawPipeline); pass.setBindGroup(0, this.state.drawGroup);
     const seamCopies = camera.model === 'equirectangular' ? 3 : 1;
-    pass.draw(6, this.model.count * seamCopies); pass.end();
+    if (compact) pass.drawIndirect(this.state.indirect, 0);
+    else pass.draw(6, this.model.count * seamCopies);
+    pass.end();
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, this.presentGroup);
-    if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 8, this.timestampBuffer, 0);
+    if (this.profiling) encoder.resolveQuerySet(this.timestampQueries, 0, 10, this.timestampBuffer, 0);
     this.device.queue.submit([encoder.finish()]); this.frameCount++;
   }
 
@@ -207,14 +230,35 @@ export class GaussianRenderer {
   async readTimings() {
     this._check();
     if (!this.profiling || !this.frameCount) return null;
-    const output = this.device.createBuffer({ size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    const encoder = this.device.createCommandEncoder(); encoder.copyBufferToBuffer(this.timestampBuffer, 0, output, 0, 64);
+    const output = this.device.createBuffer({ size: 80, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const encoder = this.device.createCommandEncoder(); encoder.copyBufferToBuffer(this.timestampBuffer, 0, output, 0, 80);
     this.device.queue.submit([encoder.finish()]);
     try {
       await output.mapAsync(GPUMapMode.READ); const t = new BigUint64Array(output.getMappedRange());
       const ms = i => Number(t[i + 1] - t[i]) / 1e6;
-      return { rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: ms(4), draw_ms: ms(6) };
+      return { compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: ms(4), draw_ms: ms(6) };
     } finally { output.destroy(); }
+  }
+
+  /** Requested allocation bytes, excluding driver/browser allocations and CPU arrays. */
+  getMemoryUsage() {
+    this._check();
+    const modelBuffers = this.resources.reduce((sum, buffer) => sum + buffer.size, 0);
+    const controlBuffers = (this.uniform?.size || 0) + (this.timestampBuffer?.size || 0);
+    const textures = (this.texture ? this.width * this.height * 8 : 0) +
+      (this.captureTexture ? this.width * this.height * 4 : 0) + (this.rayTexture ? this.rayWidth * this.rayHeight * 16 : 0);
+    return { ...this.state?.memory, modelBuffers, controlBuffers, textures, total: modelBuffers + controlBuffers + textures, shFormat: this.model?.shFormat };
+  }
+
+  /** Explicit profiling readback only; never needed by normal rendering. */
+  async readVisibility() {
+    this._check();
+    if (!this.lastCompact) return { visible: this.model.count, total: this.model.count };
+    const output = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const encoder = this.device.createCommandEncoder(); encoder.copyBufferToBuffer(this.state.indirect, 0, output, 0, 32);
+    this.device.queue.submit([encoder.finish()]);
+    try { await output.mapAsync(GPUMapMode.READ); return { visible: new Uint32Array(output.getMappedRange())[7], total: this.model.count }; }
+    finally { output.destroy(); }
   }
 
   _blit(encoder, view, pipeline, group) {

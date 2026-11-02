@@ -1,7 +1,8 @@
 import { parsePly } from './ply.js';
-self.onmessage = ({ data: { id, buffer, options } }) => {
+import { isSog, parseSog } from './sog.js';
+self.onmessage = async ({ data: { id, buffer, options } }) => {
   try {
-    const model = parsePly(buffer, options);
-    self.postMessage({ id, model }, [model.data.buffer, model.sh.buffer]);
+    const model = isSog(buffer) ? await parseSog(buffer, options) : parsePly(buffer, options);
+    self.postMessage({ id, model }, [model.data.buffer, model.sh.buffer, ...(model.shPalette ? [model.shPalette.labels.buffer, model.shPalette.coefficients.buffer] : [])]);
   } catch (error) { self.postMessage({ id, error: error.message }); }
 };

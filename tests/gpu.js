@@ -169,7 +169,7 @@ try{
     assert(maxError<=2,`Fisheye lens boundary differs from oracle: ${maxError}`);
   });
   for(const count of [777,65617])await test(`GPU radix stability: ${count} entries, partial group, culled keys`,async()=>{
-    const items=Array.from({length:count},(_,i)=>({p:[0,0,i%19===0?-1:1+((i*167)%149)/50],s:[.02,.02,.02]}));const m=model(items);await r.setModel(m);r.render(cam);
+    const items=Array.from({length:count},(_,i)=>({p:[0,0,i%19===0?-1:1+((i*167)%149)/50],s:[.02,.02,.02]}));const m=model(items);await r.setModel(m);r.render(cam,{compact:false});
     const output=r.device.createBuffer({size:m.count*8,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
     const encoder=r.device.createCommandEncoder();encoder.copyBufferToBuffer(r.state.keys[0],0,output,0,m.count*8);r.device.queue.submit([encoder.finish()]);await output.mapAsync(GPUMapMode.READ);
     const got=new Uint32Array(output.getMappedRange()).slice();output.destroy();
@@ -177,6 +177,30 @@ try{
       const za=m.data[a*12+2],zb=m.data[b*12+2];return(za<0?Infinity:-za)-(zb<0?Infinity:-zb)||a-b;
     });
     expected.forEach((id,i)=>assert(got[i*2+1]===id,`Sort mismatch at ${i}: ${got[i*2+1]} vs ${id}`));
+  });
+  await test('Tight GUT pinhole support: rotated thin ellipsoids and eye crossings',async()=>{
+    let seed=123456;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+    const c={...cam,width:48,height:32,fx:25,fy:25,cx:24,cy:16,near:.001};
+    for(let i=0;i<20;i++){
+      const g={p:[(random()-.5)*2,(random()-.5)*2,.05+random()*3],s:[.005+random()*.03,.02+random()*.2,.1+random()*2],q:[random(),random(),random(),random()],alpha:.1+random()*.85};
+      const m=model([g],'3dgut');await r.setModel(m);r.render(c,{tightBounds:false,compact:false,background:[0,0,0]});const old=await r.readPixels();
+      r.render(c,{tightBounds:true,compact:true,background:[0,0,0]});const actual=await r.readPixels();let diff=0;
+      for(let p=0;p<actual.length;p++)diff=Math.max(diff,Math.abs(actual[p]-old[p]));assert(diff===0,`Tight support clipped case ${i}: ${diff}`);
+    }
+  });
+  for(const count of [1,257,65617]) await test(`Stable visible compaction and indirect draw: ${count}`,async()=>{
+    const m=model(Array.from({length:count},(_,i)=>({p:[i%7===0?100:0,0,i%19===0?-1:1+(i%5)*.2],s:[.02,.02,.02],alpha:.2})));await r.setModel(m);
+    const readKeys=async(index,n)=>{
+      if(!n)return new Uint32Array();
+      const output=r.device.createBuffer({size:n*8,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      const enc=r.device.createCommandEncoder();enc.copyBufferToBuffer(r.state.keys[index],0,output,0,n*8);r.device.queue.submit([enc.finish()]);await output.mapAsync(GPUMapMode.READ);const data=new Uint32Array(output.getMappedRange()).slice();output.destroy();return data;
+    };
+    r.render(cam,{compact:false});const reference=await readKeys(0,count),pixels=await r.readPixels();
+    const expected=[];for(let i=0;i<count;i++)if(reference[i*2]!==0xffffffff)expected.push(reference[i*2],reference[i*2+1]);
+    r.render(cam,{compact:true});const stats=await r.readVisibility(),got=await readKeys(1,stats.visible),actual=await r.readPixels();
+    assert(stats.visible===expected.length/2,'Wrong visible count');assert(got.every((v,i)=>v===expected[i]),'Compaction changed stable order');assert(actual.every((v,i)=>v===pixels[i]),'Compaction changed image');
+    r.render({...cam,near:100},{compact:true});assert((await r.readVisibility()).visible===0,'Stale indirect count on empty frame');
+    r.render(cam,{compact:false});const restored=await r.readPixels();assert(restored.every((v,i)=>v===pixels[i]),'Legacy path did not restore full count');
   });
   await test('SH direction and non-DC basis order',async()=>{
     const coefficients=[0,0,0,.2,0,0,0,.3,0,0,0,.4];const g={p:[.2,.1,2],s:[.2,.2,.2],alpha:.8,sh:coefficients};const m=model([g],'3dgs','classic',4);await r.setModel(m);r.render(cam,{background:[0,0,0]});const pixels=await r.readPixels();

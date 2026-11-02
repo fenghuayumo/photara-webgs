@@ -9,12 +9,12 @@ const template = `
     <div class="stage" aria-busy="false">
       <canvas aria-label="Gaussian 三维场景。拖动旋转，滚轮缩放，右键平移；方向键平移，Shift 加方向键旋转，R 重置。"></canvas>
       <div class="badge"><span class="dot"></span><span data-name>Photara Gaussian Viewer</span></div>
-      <div class="empty"><span class="empty-mark" aria-hidden="true">✳</span><h2>从重建，到自由探索。</h2><p>打开 Photara 导出的 PLY，或先探索合成示例。</p><button type="button" data-demo>探索示例 <span aria-hidden="true">↗</span></button></div>
+      <div class="empty"><span class="empty-mark" aria-hidden="true">✳</span><h2>从重建，到自由探索。</h2><p>打开 PLY 或 SOG 模型，或先探索合成示例。</p><button type="button" data-demo>探索示例 <span aria-hidden="true">↗</span></button></div>
       <div class="message" role="status" aria-live="polite" hidden></div>
       <button class="reset" type="button" data-reset aria-label="重置视角" disabled>↺ <span>重置视角</span></button>
     </div>
     <div class="toolbar">
-      <div class="actions"><button class="primary" type="button" data-open>打开 PLY <span aria-hidden="true">＋</span></button><input type="file" accept=".ply" data-file hidden><button type="button" data-example>合成示例</button></div>
+      <div class="actions"><button class="primary" type="button" data-open>打开 PLY / SOG <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog" data-file hidden><button type="button" data-example>合成示例</button></div>
       <div class="metadata" aria-label="模型信息"><span data-count>尚未加载模型</span><span data-method>—</span><span data-filter>—</span></div>
     </div>
     <div class="footer"><span>拖动旋转 · 滚轮缩放 · 右键平移</span><span data-detail>文件在本机解析，不会上传。</span></div>
@@ -90,22 +90,23 @@ export class GaussianViewer {
   /** File/Blob, URL string or ArrayBuffer; parsing happens in a module worker. */
   load(source, { name, maxSplats, maxBytes = 1024 * 1024 * 1024 } = {}) {
     return this._replace(async signal => {
-      let buffer;
+      let buffer, baseUrl;
       if (source instanceof ArrayBuffer) buffer = source;
       else if (source instanceof Blob) {
-        if (source.size > maxBytes) throw new Error('PLY 文件超过加载大小限制。');
+        if (source.size > maxBytes) throw new Error('模型文件超过加载大小限制。');
         name ||= source.name; buffer = await source.arrayBuffer();
       } else {
         const response = await fetch(source, { signal });
+        baseUrl = response.url;
         if (!response.ok) throw new Error(`模型加载失败：HTTP ${response.status}`);
-        if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('PLY 文件超过加载大小限制。');
+        if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('模型文件超过加载大小限制。');
         // Enforce the size limit even for chunked responses without Content-Length.
         const reader = response.body.getReader(), chunks = []; let size = 0;
         try {
           while (true) {
             const { done, value } = await reader.read(); if (done) break;
             size += value.byteLength;
-            if (size > maxBytes) throw new Error('PLY 文件超过加载大小限制。');
+            if (size > maxBytes) throw new Error('模型文件超过加载大小限制。');
             chunks.push(value);
           }
         } finally { await reader.cancel().catch(() => {}); }
@@ -115,8 +116,8 @@ export class GaussianViewer {
         name ||= String(source).split('/').at(-1).split('?')[0];
       }
       if (signal.aborted) throw new DOMException('Load cancelled', 'AbortError');
-      if (buffer.byteLength > maxBytes) throw new Error('PLY 文件超过加载大小限制。');
-      return this.loader.parse(buffer, { name, ...(maxSplats === undefined ? {} : { maxSplats }) });
+      if (buffer.byteLength > maxBytes) throw new Error('模型文件超过加载大小限制。');
+      return this.loader.parse(buffer, { name, baseUrl, maxBytes, ...(maxSplats === undefined ? {} : { maxSplats }) });
     });
   }
   loadDemo(options) { return this._replace(async () => createDemoModel(options)); }

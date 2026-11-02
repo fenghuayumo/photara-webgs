@@ -1,11 +1,18 @@
 // common.wgsl is prepended by the loader.
 @group(0) @binding(1) var<storage,read> gaussians: array<Gaussian>;
-@group(0) @binding(2) var<storage,read> harmonics: array<f32>;
+@group(0) @binding(2) var<storage,read> harmonics: array<u32>;
 @group(0) @binding(3) var<storage,read_write> projected: array<Projected>;
 @group(0) @binding(4) var<storage,read_write> keys: array<vec2u>;
 fn coeff(id: u32, b: u32) -> vec3f {
-    let k = (id*cam.config.y+b)*3u;
-    return vec3f(harmonics[k],harmonics[k+1u],harmonics[k+2u]);
+    var k = (id*cam.config.y+b)*3u;
+    if (cam.lens.w == 1u) {
+        k = id*3u;
+        if (b != 0u) {
+            let label = harmonics[cam.config.x*3u+id];
+            k = cam.config.x*4u+(label*(cam.config.y-1u)+b-1u)*3u;
+        }
+    }
+    return vec3f(bitcast<f32>(harmonics[k]),bitcast<f32>(harmonics[k+1u]),bitcast<f32>(harmonics[k+2u]));
 }
 fn colorSH(id: u32, center: vec3f) -> vec3f {
     var rgb = 0.28209479177387814*coeff(id,0u);
@@ -113,7 +120,7 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
     let az = vr*rotate(q,vec3f(0,0,1));
     let scales = g.scale.xyz*cam.viewport.w;
     let a = ax*scales.x; let b = ay*scales.y; let c = az*scales.z;
-    out.color = vec4f(colorSH(id,g.centerOpacity.xyz),opacity);
+    out.color = vec4f(0,0,0,opacity);
     let threshold = max(0.0,2.0*log(opacity/ALPHA_FLOOR));
     if (cam.config.z == 1u) {
         let radius = sqrt(threshold)*max(scales.x,max(scales.y,scales.z));
@@ -124,6 +131,33 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
                 out.bounds.x = -1.0; out.bounds.z = cam.viewport.x+1.0;
             }
             out.centerConic.xy = 0.5*(out.bounds.xy+out.bounds.zw);
+        } else if (cam.lens.z != 0u && cam.lens.x == 0u) {
+            // Exact tangent planes of the finite-alpha ellipsoid, rather than
+            // a max-axis sphere. Retain full support when it crosses the eye.
+            let x = vec3f(a.x,b.x,c.x); let y = vec3f(a.y,b.y,c.y); let z = vec3f(a.z,b.z,c.z);
+            let padding = 1e-5*radius*radius+1e-12;
+            let zz = threshold*dot(z,z)+padding;
+            if (t.z > sqrt(zz)+1e-5) {
+                let bx = ellipsoidSlope(t.x,t.z,threshold*dot(x,z),threshold*dot(x,x)+padding,zz)*cam.intrinsics.x+vec2f(cam.intrinsics.z);
+                let by = ellipsoidSlope(t.y,t.z,threshold*dot(y,z),threshold*dot(y,y)+padding,zz)*cam.intrinsics.y+vec2f(cam.intrinsics.w);
+                out.bounds = vec4f(bx.x-1.0,by.x-1.0,bx.y+1.0,by.y+1.0);
+            } else {
+                // When support crosses z=0, a finite two-sided tangent bound
+                // does not exist. Its AABB still bounds each positive-z ray:
+                // an axis entirely on one side of zero gives a one-sided
+                // screen bound. Keep full coverage on axes crossing zero.
+                let extent = sqrt(threshold*vec3f(dot(x,x),dot(y,y),dot(z,z))+vec3f(padding));
+                let farZ = max(1e-8,t.z+extent.z);
+                var lo = vec2f(-1); var hi = cam.viewport.xy+1.0;
+                for (var axis=0u; axis<2u; axis++) {
+                    if (t[axis] > extent[axis]) {
+                        lo[axis] = max(lo[axis],(t[axis]-extent[axis])/farZ*cam.intrinsics[axis]+cam.intrinsics[axis+2u]-1.0);
+                    } else if (t[axis] < -extent[axis]) {
+                        hi[axis] = min(hi[axis],(t[axis]+extent[axis])/farZ*cam.intrinsics[axis]+cam.intrinsics[axis+2u]+1.0);
+                    }
+                }
+                out.bounds = vec4f(lo,hi);
+            }
         } else {
         // Seven-point UT (lambda=1); used only for screen coverage.
         var points: array<vec2f,7>;
@@ -180,11 +214,12 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
         let e = sqrt(th*cov.xz)+1.0;
         out.bounds = vec4f(p.pixel-e,p.pixel+e);
         out.centerConic = vec4f(p.pixel,cov.z/det,-cov.y/det);
-        out.extra.x = cov.x/det;
+        out.row0.x = cov.x/det;
     }
     if (out.bounds.w < 0.0 || out.bounds.y > cam.viewport.y) { return; }
     if (cam.lens.x != 3u && (out.bounds.z < 0.0 || out.bounds.x > cam.viewport.x)) { return; }
-    out.extra.y = 1.0;
+    // Avoid reading/evaluating SH for Gaussians rejected by screen bounds.
+    out.color = vec4f(colorSH(id,g.centerOpacity.xyz),out.color.w);
     projected[id] = out;
     let depth = select(t.z,length(t),cam.config.z==1u || cam.lens.x==3u);
     // Positive depth IEEE bits are monotonic. Invert for back-to-front draw.

@@ -6,7 +6,8 @@
   "description": "Embeddable WebGPU Gaussian viewer with Photara conventions",
   "scripts": {
     "dev": "node scripts/serve.mjs",
-    "test": "node --test tests/core.test.mjs tests/colmap.test.mjs",
+    "test": "node --test tests/core.test.mjs tests/colmap.test.mjs tests/sog.test.mjs tests/gpu-storage.test.mjs",
+    "test:sog": "node scripts/test-sog.mjs",
     "test:gpu": "node scripts/test-gpu.mjs"
   },
   "exports": "./src/index.js"

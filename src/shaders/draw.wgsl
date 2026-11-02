@@ -14,7 +14,7 @@ struct VertexOut {
     out.id = id;
     out.seamShift = 0.0;
     let p = projected[id];
-    if (p.extra.y==0.0) { out.position=vec4f(2,2,0.5,1); return out; }
+    if (p.color.w<ALPHA_FLOOR) { out.position=vec4f(2,2,0.5,1); return out; }
     let corners = array<vec2f,6>(vec2f(0,0),vec2f(1,0),vec2f(1,1),vec2f(0,0),vec2f(1,1),vec2f(0,1));
     var pixel = mix(p.bounds.xy,p.bounds.zw,corners[vertex]);
     if (seamCopies) {
@@ -59,7 +59,7 @@ struct VertexOut {
             // wider than half the panorama. Prevent duplicate alpha blending.
             if (delta.x < -0.5*cam.viewport.x || delta.x >= 0.5*cam.viewport.x) { discard; }
         }
-        distance = p.centerConic.z*delta.x*delta.x+2.0*p.centerConic.w*delta.x*delta.y+p.extra.x*delta.y*delta.y;
+        distance = p.centerConic.z*delta.x*delta.x+2.0*p.centerConic.w*delta.x*delta.y+p.row0.x*delta.y*delta.y;
     }
     let alpha = min(0.99,p.color.w*exp(-0.5*distance));
     if (alpha<ALPHA_FLOOR) { discard; }
