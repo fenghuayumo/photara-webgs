@@ -22,6 +22,7 @@ const template = `
       <label class="fly-speed" hidden>移动速度 <select data-speed aria-label="漫游移动速度"><option value="0.25">慢速 · 0.25×</option><option value="1" selected>标准 · 1×</option><option value="4">快速 · 4×</option></select></label>
       <span class="navigation-key">V 切换模式</span>
       <label class="render-quality">渲染 <select data-quality aria-label="渲染质量模式"><option value="sorted">完整画质</option><option value="movement">交互加速（移动时有噪点）</option></select></label>
+      <label class="render-quality" data-denoise-label hidden>去噪 <select data-denoise aria-label="随机渲染去噪"><option value="temporal">空间 + 时间重投影</option><option value="spatial">仅空间重建</option><option value="none">关闭（原始采样）</option></select></label>
       <span class="navigation-key" data-render-state aria-live="polite">完整画质</span>
     </div>
     <div class="footer"><span data-help>拖动旋转 · 滚轮缩放 · 右键平移 · 双击聚焦</span><span data-detail>文件在本机解析，不会上传。</span></div>
@@ -29,8 +30,9 @@ const template = `
 
 /** Framework-independent mount; styles are scoped by a shadow root in the element. */
 export class GaussianViewer {
-  constructor(root, { pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2), controlMode = 'orbit', renderingMode = 'sorted', onLoad, onError, onReady } = {}) {
+  constructor(root, { pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2), controlMode = 'orbit', renderingMode = 'sorted', reconstruction = 'temporal', onLoad, onError, onReady } = {}) {
     this.root = root; this.options = { pixelRatio, onLoad, onError, onReady };
+    this.reconstructionMode = 'temporal';
     this.abort = new AbortController(); this.loader = new PlyLoader(); this.generation = 0; this.uploadQueue = Promise.resolve();
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./viewer.css', import.meta.url).href;
     root.replaceChildren(link); const container = document.createElement('div'); container.innerHTML = template; root.append(container);
@@ -45,6 +47,7 @@ export class GaussianViewer {
     root.querySelectorAll('[data-mode]').forEach(button => listen(button, 'click', () => { this.setControlMode(button.dataset.mode); this.canvas.focus({ preventScroll: true }); }));
     listen(root.querySelector('[data-speed]'), 'change', e => { this.controls.setSpeed(Number(e.target.value)); this.canvas.focus({ preventScroll: true }); });
     listen(root.querySelector('[data-quality]'), 'change', e => this.setRenderingMode(e.target.value));
+    listen(root.querySelector('[data-denoise]'), 'change', e => this.setReconstructionMode(e.target.value));
     listen(this.canvas, 'dblclick', e => {
       if (e.button !== 0 || !this.controls.enabled || !this.modelInfo) return;
       e.preventDefault();
@@ -61,11 +64,18 @@ export class GaussianViewer {
     this.resize = new ResizeObserver(() => this.invalidate()); this.resize.observe(this.stage);
     this.setControlMode(controlMode);
     this.setRenderingMode(renderingMode);
+    this.setReconstructionMode(reconstruction);
+  }
+  setReconstructionMode(mode) {
+    if (!['none','spatial','temporal'].includes(mode)) throw new Error('Unknown stochastic reconstruction');
+    this.reconstructionMode=mode;this.root.querySelector('[data-denoise]').value=mode;
+    this.renderer?.reconstruction?.reset();this.invalidate();
   }
   setRenderingMode(mode) {
     if (!['sorted', 'movement'].includes(mode)) throw new Error('Unknown viewer rendering mode');
     this.renderingMode = mode; this.motionUntil = 0;
     this.root.querySelector('[data-quality]').value = mode;
+    this.root.querySelector('[data-denoise-label]').hidden=mode!=='movement';
     clearTimeout(this.settleTimer); this.invalidate();
   }
   _controlsChanged() {
@@ -195,7 +205,7 @@ export class GaussianViewer {
       const camera = this.calibratedCamera || this.controls.camera(Math.max(1, Math.round(box.width * this.options.pixelRatio)), Math.max(1, Math.round(box.height * this.options.pixelRatio)));
       const transparency = this.renderingMode === 'movement' && !this.calibratedCamera && (active || time < this.motionUntil) ? 'stochastic' : 'sorted';
       try {
-        this.renderer.render(camera, { transparency });
+        this.renderer.render(camera, { transparency, reconstruction:this.reconstructionMode });
         const state = this.root.querySelector('[data-render-state]'), text = transparency === 'stochastic' ? '随机预览 · 停止后恢复画质' : '完整画质';
         if (state.textContent !== text) state.textContent = text;
       } catch (error) { this._error(error); }

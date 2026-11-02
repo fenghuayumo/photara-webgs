@@ -14,7 +14,16 @@ struct StochasticOut {
 fn stochasticResponse(input: VertexOut) -> vec2f {
     let response = gaussianResponse(input);
     let pixel = vec2u(floor(input.position.xy));
-    let random = f32(hash(hash(pixel.x+pixel.y*u32(cam.viewport.x)) ^ hash(input.id) ^ hash(stochastic.x)) >> 8u)/16777216.0;
+    var random = f32(hash(hash(pixel.x+pixel.y*u32(cam.viewport.x)) ^ hash(input.id) ^ hash(stochastic.x)) >> 8u)/16777216.0;
+    if (stochastic.y != 0u) {
+        // Randomly permuted four strata in each 2x2 pixel quad. Every pixel
+        // remains marginally uniform, but smooth alpha covers the quad evenly.
+        let quad = pixel/2u;
+        let h = hash(hash(quad.x+quad.y*((u32(cam.viewport.x)+1u)/2u)) ^ hash(input.id) ^ hash(stochastic.x));
+        let lane = (pixel.x&1u)+2u*(pixel.y&1u);
+        let stratum = (lane*select(1u,3u,(h&1u)!=0u)+(h>>1u))&3u;
+        random = (f32(stratum)+f32(hash(h)>>8u)/16777216.0)*0.25;
+    }
     if (random >= response.x || !(response.y > 0.0)) { discard; }
     return response;
 }

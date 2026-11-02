@@ -253,19 +253,25 @@ await renderer.setModel(editable); // 仍核对 canonical SH 编辑，必要时�
 
 “渲染”选项默认 **完整画质**。选择 **交互加速（移动时有噪点）** 后，
 移动期间跳过排序，以随机透明采样和深度测试绘制；停止后恢复完整排序画质。
-此模式不会删点或改变 SOG 数据，但移动帧有可见噪点，尚未加入时间降噪。
+此模式不会删点或改变 SOG 数据。现已加入 2×2 分层采样、空间重建和时间重投影降噪，
+“去噪”选项可比较关闭 / 仅空间 / 空间 + 时间；移动帧仍有噪点和细节软化。
 截图及标定相机继续使用完整排序。
 
 ```js
 element.setRenderingMode('movement'); // 开启交互加速
 element.setRenderingMode('sorted'); // 默认完整画质
+element.setReconstructionMode('temporal'); // 交互加速时默认；可选 'spatial' / 'none'
 renderer.render(camera, { transparency:'stochastic' }); // 底层显式随机帧
+renderer.render(camera, { transparency:'stochastic', reconstruction:'temporal' }); // 显式去噪
 await renderer.readPixels(); // 默认强制完整排序截图
 await renderer.readPixels({ exact:false }); // 诊断随机帧
 ```
 
 完整 300 万点短轨迹实测与精度边界见 [随机渲染报告](docs/stochastic-rendering.md)。
 它增加每像素 4 bytes 深度纹理，不保证所有设备或场景提速；GUT 绘制阶段可能变慢。
+空间 + 时间重建还增加 44 bytes/pixel 纹理。完整场景运动 MAE 相比原始随机下降约
+54–61%，GPU 新增重建 pass 约 0.024–0.047 ms；细节、拖影与测量边界见
+[重建报告](docs/stochastic-reconstruction.md)。停止后的排序截图保持逐字节一致。
 
 ## 查看器相机控制与双击聚焦
 

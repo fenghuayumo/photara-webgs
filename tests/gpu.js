@@ -296,6 +296,78 @@ try{
     fish.distortion[0]=.2;fish.worldToCamera[12]+=2;
     const restored=await r.readPixels();assert(restored.every((v,i)=>v===exact[i]),'Capture camera snapshot was mutated by caller');
   });
+  await test('Spatial/temporal reconstruction reduces noise and preserves exact output across lenses',async()=>{
+    const mae=(a,b)=>a.reduce((s,v,i)=>s+(i%4===3?0:Math.abs(v-b[i])),0)/(a.length*.75);
+    for(const method of ['3dgs','3dgut'])for(const mode of ['pinhole','orthographic','fisheye','equirectangular']){
+      const c={...cam,width:48,height:32,fx:30,fy:30,cx:24,cy:16,model:mode};
+      if(mode==='equirectangular')Object.assign(c,{fx:48/(2*Math.PI),fy:32/Math.PI});
+      await r.setModel(model([{p:[0,0,2],s:[.5,.5,.5],alpha:.5,color:[1,.2,.1]}],method));
+      r.render(c,{background:[0,0,0]});const exact=await r.readPixels();
+      let rawError=0,spatialError=0,temporalError=0;
+      for(let seed=0;seed<12;seed++){
+        r.render(c,{background:[0,0,0],transparency:'stochastic',stochasticSeed:seed});rawError+=mae(await r.readPixels({exact:false}),exact);
+        r.render(c,{background:[0,0,0],transparency:'stochastic',stochasticSeed:seed,reconstruction:'spatial'});spatialError+=mae(await r.readPixels({exact:false}),exact);
+      }
+      for(let seed=0;seed<12;seed++){
+        r.render(c,{background:[0,0,0],transparency:'stochastic',stochasticSeed:seed,reconstruction:'temporal'});
+        temporalError+=mae(await r.readPixels({exact:false}),exact);
+      }
+      assert(spatialError<rawError*.75,`${method}/${mode} spatial noise reduction failed ${spatialError}/${rawError}`);
+      assert(temporalError<spatialError,`${method}/${mode} temporal noise reduction failed ${temporalError}/${spatialError}`);
+      assert(r.reconstruction.historyAccepted,'Consecutive frames rejected all history');
+      const timing=await r.readTimings();if(timing)assert(timing.spatial_ms>=0&&timing.temporal_ms>=0,'Missing reconstruction timings');
+      const restored=await r.readPixels();assert(restored.every((v,i)=>v===exact[i]),'Reconstruction changed exact capture');
+      assert(r.reconstruction.previous===null,'Sorted output did not reset history');
+    }
+  });
+  await test('Reprojection disocclusion, history resets and odd viewport edges',async()=>{
+    const c={...cam,width:49,height:33,fx:35,fy:35,cx:24,cy:16};
+    // A red foreground patch in front of a green background; a camera truck
+    // reveals green. Reprojection must not leave red at the old pixel location.
+    const items=[{p:[0,0,2],s:[.18,.35,.05],alpha:.99,color:[1,0,0]},
+      {p:[0,0,4],s:[2,2,.05],alpha:.99,color:[0,1,0]}];
+    await r.setModel(model(items));
+    for(let seed=0;seed<8;seed++)r.render(c,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:seed});
+    const moved={...c,worldToCamera:lookAtCV([.7,0,0],[.7,0,2])};
+    r.render(moved,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:12});
+    const moving=await r.readPixels({exact:false}),i=(16*49+24)*4;
+    assert(moving[i]<25&&moving[i+1]>220,`Disocclusion retained red history: ${moving.slice(i,i+4)}`);
+    r.render(moved,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:12,resetHistory:true});
+    assert(!r.reconstruction.historyAccepted,'Explicit reset retained history');
+    const reset=await r.readPixels({exact:false});
+    r.render(moved,{transparency:'stochastic',reconstruction:'spatial',stochasticSeed:12});
+    assert((await r.readPixels({exact:false})).every((v,i)=>v===reset[i]),'First temporal frame differs from spatial');
+    r.render(moved,{transparency:'stochastic',reconstruction:'temporal'});
+    r.render({...moved,fx:40},{transparency:'stochastic',reconstruction:'temporal'});assert(!r.reconstruction.historyAccepted,'Lens change retained history');
+    r.render(moved,{transparency:'stochastic',reconstruction:'temporal',background:[1,1,1]});assert(!r.reconstruction.historyAccepted,'Background change retained history');
+    r.render({...moved,width:51},{transparency:'stochastic',reconstruction:'temporal'});assert(!r.reconstruction.historyAccepted,'Resize retained history');
+    await r.setModel(model([{p:[0,0,2],s:[.3,.3,.3],alpha:.9,color:[0,0,1]}]));
+    r.render(c,{transparency:'stochastic',reconstruction:'temporal'});assert(!r.reconstruction.historyAccepted,'Model replacement retained history');
+    const pixels=await r.readPixels({exact:false});assert(pixels.every((v,i)=>i%4===3||i%4===2||v<=18),'New model retained old red/green');
+    r.render(c);assert(r.reconstruction.previous===null,'Switch to sorted retained history');
+    r.render({...c,width:51});r.render(c,{transparency:'stochastic',reconstruction:'temporal'});
+    assert(!r.reconstruction.historyAccepted&&r.reconstruction.color,'Returning to prior dimensions did not recreate textures');
+  });
+  await test('Reconstruction thin-detail contrast and moving disocclusion trail bounds',async()=>{
+    const c={...cam,width:65,height:49,fx:64,fy:64,cx:32,cy:24};
+    await r.setModel(model([{p:[0,0,2],s:[.018,.5,.02],alpha:.99,color:[1,0,0]}]));
+    r.render(c,{background:[0,0,0]});const reference=await r.readPixels(),center=(24*65+32)*4;
+    for(let i=0;i<16;i++)r.render(c,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:i,background:[0,0,0]});
+    const filtered=await r.readPixels({exact:false}),contrast=filtered[center]/reference[center];
+    assert(contrast>.45,`Thin line contrast collapsed: ${contrast}`);
+    const restored=await r.readPixels();assert(restored.every((v,i)=>v===reference[i]),'Thin detail not restored exactly');
+    await r.setModel(model([{p:[0,0,2],s:[.18,.35,.05],alpha:.99,color:[1,0,0]},
+      {p:[0,0,4],s:[2,2,.05],alpha:.99,color:[0,1,0]}]));
+    for(let seed=0;seed<8;seed++)r.render(c,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:seed});
+    let maxTrail=0;
+    for(let frame=0;frame<8;frame++){
+      const x=.7+frame*.02,camera={...c,worldToCamera:lookAtCV([x,0,0],[x,0,2])};
+      r.render(camera,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:frame+10});
+      const pixels=await r.readPixels({exact:false});maxTrail=Math.max(maxTrail,pixels[center]);
+    }
+    assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
+    results.push({name:'Reconstruction detail/trail measurements',thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
+  });
   await test('Near clipping and resize/readback row padding',async()=>{
     await r.setModel(model(scene));r.render({...cam,near:10,width:67,height:41},{background:[.1,.2,.3]});const p=await r.readPixels();
     assert(p.length===67*41*4,'Readback dimensions');assert(Math.abs(p[0]-26)<=1&&Math.abs(p.at(-2)-77)<=1,'Clipped frame/background');

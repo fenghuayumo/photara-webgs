@@ -48,6 +48,22 @@ try {
     // Keep interaction acceleration enabled through all following orbit, fly,
     // focus, calibrated-camera and capture checks.
     result.ui.push('Opt-in movement rendering and exact restore after key release/reset');
+    const denoise=page.locator('photara-viewer').locator('[data-denoise]');
+    for(const reconstruction of ['spatial','none','temporal']) {
+      await denoise.selectOption(reconstruction);
+      await canvas.focus();await page.keyboard.down('w');
+      await page.waitForFunction(mode=>{
+        const r=document.querySelector('photara-viewer').viewer.renderer;
+        return r.lastTransparency==='stochastic'&&r.lastReconstruction===mode;
+      },reconstruction);
+      await page.keyboard.up('w');
+    }
+    await canvas.press('r');
+    await page.waitForFunction(()=>{
+      const v=document.querySelector('photara-viewer').viewer;
+      return performance.now()>v.motionUntil&&!v.frame&&v.renderer.lastTransparency==='sorted';
+    });
+    result.ui.push('Raw/spatial/temporal reconstruction selector and sorted restore');
     const before = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);
     await canvas.focus(); await page.keyboard.press('Shift+ArrowRight');
     const after = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);
