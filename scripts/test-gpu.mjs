@@ -31,6 +31,31 @@ try {
     await page.locator('photara-viewer').locator('[data-demo]').click();
     await page.waitForFunction(() => document.querySelector('photara-viewer').viewer?.renderer?.frameCount > 0);
     const canvas = page.locator('photara-viewer').locator('canvas');
+    const fullscreen = page.locator('photara-viewer').locator('[data-fullscreen]');
+    const settingsToggle = page.locator('photara-viewer').locator('[data-settings-toggle]');
+    await settingsToggle.click();
+    if(!await page.evaluate(()=>{
+      const root=document.querySelector('photara-viewer').shadowRoot;
+      return [...root.querySelectorAll('.toolbar,.navigation,.footer')].every(panel=>panel.hidden);
+    }))throw new Error('Settings panels did not hide');
+    await settingsToggle.click();
+    if(await settingsToggle.getAttribute('aria-expanded')!=='true')throw new Error('Settings panels did not restore');
+    result.ui.push('Hide and restore settings panels from viewport icon');
+    await fullscreen.click();
+    await page.waitForFunction(()=>document.querySelector('photara-viewer').viewer.isFullscreen());
+    const fillsScreen=await page.evaluate(()=>{
+      const v=document.querySelector('photara-viewer').viewer,b=v.container.getBoundingClientRect();
+      return Math.abs(b.width-innerWidth)<2&&Math.abs(b.height-innerHeight)<2&&v.stage.clientHeight>innerHeight/2;
+    });
+    if(!fillsScreen)throw new Error('Fullscreen viewer did not fill viewport');
+    await page.screenshot({path:fileURLToPath(new URL('../test-results/fullscreen.png',import.meta.url))});
+    await fullscreen.click();
+    await page.waitForFunction(()=>{
+      const v=document.querySelector('photara-viewer').viewer;
+      return !v.isFullscreen()&&v.root.querySelector('[data-fullscreen]').getAttribute('aria-pressed')==='false';
+    });
+    if(await fullscreen.getAttribute('aria-pressed')!=='false')throw new Error('Fullscreen button state did not restore');
+    result.ui.push('Fullscreen enter/exit, viewport sizing and accessible button state');
     const quality = page.locator('photara-viewer').locator('[data-quality]');
     await quality.selectOption('movement');
     await canvas.focus(); await page.keyboard.down('w');

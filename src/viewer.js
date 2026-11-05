@@ -9,9 +9,11 @@ const template = `
     <div class="stage" aria-busy="false">
       <canvas aria-label="Gaussian 三维场景。拖动旋转，滚轮缩放，右键平移，双击聚焦；方向键平移，Shift 加方向键旋转，R 重置。"></canvas>
       <div class="badge"><span class="dot"></span><span data-name>Photara Gaussian Viewer</span></div>
+      <button class="settings-toggle viewport-action" type="button" data-settings-toggle aria-label="隐藏设置" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 15h18m-12-6 3 3 3-3"/></svg><span class="button-tooltip" data-settings-label aria-hidden="true">隐藏设置</span></button>
+      <button class="fullscreen viewport-action" type="button" data-fullscreen aria-label="全屏查看" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="expand-icon" d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path class="collapse-icon" d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg><span class="button-tooltip" data-fullscreen-label aria-hidden="true">全屏查看</span></button>
       <div class="empty"><span class="empty-mark" aria-hidden="true">✳</span><h2>从重建，到自由探索。</h2><p>打开 PLY 或 SOG 模型，或先探索合成示例。</p><button type="button" data-demo>探索示例 <span aria-hidden="true">↗</span></button></div>
       <div class="message" role="status" aria-live="polite" hidden></div>
-      <button class="reset" type="button" data-reset aria-label="重置视角" disabled>↺ <span>重置视角</span></button>
+      <button class="reset viewport-action" type="button" data-reset aria-label="重置视角" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/></svg><span class="button-tooltip" aria-hidden="true">重置视角 · R</span></button>
     </div>
     <div class="toolbar">
       <div class="actions"><button class="primary" type="button" data-open>打开 PLY / SOG <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog" data-file hidden><button type="button" data-example>合成示例</button></div>
@@ -37,6 +39,7 @@ export class GaussianViewer {
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./viewer.css', import.meta.url).href;
     root.replaceChildren(link); const container = document.createElement('div'); container.innerHTML = template; root.append(container);
     this.canvas = root.querySelector('canvas'); this.stage = root.querySelector('.stage'); this.message = root.querySelector('.message');
+    this.container = root.querySelector('.viewer');
     this.controls = new OrbitControls(this.canvas, () => this._controlsChanged(), () => this._updateNavigation());
     const listen = (element, type, fn, options = {}) => element.addEventListener(type, fn, { ...options, signal: this.abort.signal });
     const file = root.querySelector('[data-file]');
@@ -44,6 +47,31 @@ export class GaussianViewer {
     listen(file, 'change', () => { const selected = file.files[0]; file.value = ''; if (selected) this.load(selected).catch(() => {}); });
     ['[data-demo]', '[data-example]'].forEach(selector => listen(root.querySelector(selector), 'click', () => this.loadDemo().catch(() => {})));
     listen(root.querySelector('[data-reset]'), 'click', () => this.resetCamera());
+    const settingsToggle = root.querySelector('[data-settings-toggle]');
+    listen(settingsToggle, 'click', () => {
+      const expanded = settingsToggle.getAttribute('aria-expanded') !== 'true';
+      settingsToggle.setAttribute('aria-expanded', String(expanded));
+      const label = expanded ? '隐藏设置' : '显示设置';
+      settingsToggle.setAttribute('aria-label', label);
+      root.querySelector('[data-settings-label]').textContent = label;
+      for (const panel of root.querySelectorAll('.toolbar, .navigation, .footer')) panel.hidden = !expanded;
+      this.invalidate();
+    });
+    const fullscreen = root.querySelector('[data-fullscreen]');
+    fullscreen.hidden = !this.container.requestFullscreen || !document.fullscreenEnabled;
+    listen(fullscreen, 'click', async () => {
+      try {
+        if (this.isFullscreen()) await document.exitFullscreen();
+        else await this.container.requestFullscreen();
+      } catch (error) { this._error(new Error(`无法切换全屏：${error.message}`)); }
+    });
+    listen(document, 'fullscreenchange', () => {
+      const active = this.isFullscreen();
+      fullscreen.setAttribute('aria-pressed', String(active));
+      fullscreen.setAttribute('aria-label', active ? '退出全屏' : '全屏查看');
+      root.querySelector('[data-fullscreen-label]').textContent = active ? '退出全屏 · Esc' : '全屏查看';
+      this.controls.stop(); this.invalidate();
+    });
     root.querySelectorAll('[data-mode]').forEach(button => listen(button, 'click', () => { this.setControlMode(button.dataset.mode); this.canvas.focus({ preventScroll: true }); }));
     listen(root.querySelector('[data-speed]'), 'input', e => {
       const speed = Math.round(10 ** Number(e.target.value) * 100) / 100;
@@ -71,6 +99,7 @@ export class GaussianViewer {
     this.setRenderingMode(renderingMode);
     this.setReconstructionMode(reconstruction);
   }
+  isFullscreen() { return this.root.fullscreenElement === this.container || document.fullscreenElement === this.container; }
   setReconstructionMode(mode) {
     if (!['none','spatial','temporal'].includes(mode)) throw new Error('Unknown stochastic reconstruction');
     this.reconstructionMode=mode;this.root.querySelector('[data-denoise]').value=mode;
