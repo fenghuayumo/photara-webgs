@@ -65,6 +65,8 @@ button:hover { border-color: #ffffff40; }
 .fly-speed, .render-quality { min-height: 40px; }
 .render-quality select { background: #ffffff06; border-color: #ffffff18; }
 .render-quality select option { background: #142139; }
+.navigation select[data-language] { width: 62px; padding: 6px 8px; border: 0; border-radius: 0; background: transparent; color: var(--pg-text); }
+.navigation select[data-language]:hover { background: #ffffff08; }
 .fly-speed output { font-size: 11px; padding: 4px 7px; border: 1px solid #ffffff15; border-radius: 6px; background: #ffffff04; }
 [data-render-state] { margin-left: auto; border-radius: 20px; padding: 5px 10px; background: #8caaff0d; color: #acbeDF; }
 .footer { padding: 0 22px 16px; }

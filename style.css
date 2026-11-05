@@ -10,6 +10,9 @@ header { height: 100px; display: flex; align-items: center; justify-content: spa
 .header-link { color: #91add8; font-size: 12px; }.header-link span { margin-left: 18px; color: #8caaff; }
 .header-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; justify-content: flex-end; }
 .language-picker { font-size: 12px; color: #91add8; white-space: nowrap; }
+.language-picker select[data-language] { width: 62px; margin: 0; padding: 6px 8px; border: 0; border-radius: 0; background: transparent; color: #c5d4eb; font-size: 12px; }
+.language-picker select[data-language]:hover { background: #ffffff08; }
+.language-picker option { background: #142138; }
 @media(max-width: 640px) {
   header { height: auto; min-height: 100px; gap: 12px; flex-wrap: wrap; padding-top: 20px; padding-bottom: 16px; }
   .header-actions { gap: 10px; }

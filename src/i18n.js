@@ -121,7 +121,7 @@ export function localize(root) {
   }
   (root.documentElement || root.querySelector('.viewer'))?.setAttribute('lang', language);
   for (const control of root.querySelectorAll('[data-language]')) {
-    control.value = languagePreference;
+    control.value = language;
     if (!boundControls.has(control)) {
       control.addEventListener('change', () => setLanguage(control.value));
       boundControls.add(control);

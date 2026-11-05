@@ -256,7 +256,7 @@ try {
       await localized.reload();
       await localized.waitForFunction(()=>document.querySelector('photara-viewer')?.viewer);
       if(await localized.locator('header [data-language]').inputValue()!==override)throw new Error('Language preference was not persisted');
-      await localized.locator('photara-viewer').locator('[data-language]').selectOption('auto');
+      await localized.evaluate(async()=>{const {setLanguage}=await import('/src/i18n.js');setLanguage('auto');});
       if(await localized.locator('h1').textContent()!==(chinese?'空间，换一个视角。':'Space, from a new perspective.'))throw new Error('Auto did not restore system language');
       await localized.close();
     }
