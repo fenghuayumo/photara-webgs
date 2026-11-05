@@ -27,7 +27,9 @@ function oracle(m,camera,x,y) {
   let rgb=[0,0,0],T=1;
   const order=Array.from({length:m.count},(_,i)=>i).sort((a,b)=>{
     const ca=view(m.data.subarray(a*12,a*12+3)),cb=view(m.data.subarray(b*12,b*12+3));
-    return m.renderMethod==='3dgut'||mode==='equirectangular'?dot(ca,ca)-dot(cb,cb):ca[2]-cb[2];
+    // Reverse original IDs for equal depths: the GPU's stable back-to-front
+    // draw is traversed front-to-back by this transmittance reference.
+    return (mode==='orthographic'?ca[2]-cb[2]:dot(ca,ca)-dot(cb,cb))||b-a;
   });
   for(const id of order){
     const g=m.data.subarray(id*12,id*12+12), t=view(g.subarray(0,3)),s=g.subarray(4,7);
@@ -58,12 +60,18 @@ function oracle(m,camera,x,y) {
     }else{
       let px=camera.fx*t[0]/t[2]+camera.cx,py=camera.fy*t[1]/t[2]+camera.cy;
       let du=[camera.fx/t[2],0,-camera.fx*t[0]/t[2]**2],dv=[0,camera.fy/t[2],-camera.fy*t[1]/t[2]**2];
+      if(mode==='pinhole'){
+        const tx=Math.max(-1.3*camera.width/(2*camera.fx),Math.min(1.3*camera.width/(2*camera.fx),t[0]/t[2]));
+        const ty=Math.max(-1.3*camera.height/(2*camera.fy),Math.min(1.3*camera.height/(2*camera.fy),t[1]/t[2]));
+        du[2]=-camera.fx*tx/t[2];dv[2]=-camera.fy*ty/t[2];
+      }
       if(mode==='orthographic'){px=camera.fx*t[0]+camera.cx;py=camera.fy*t[1]+camera.cy;du=[camera.fx,0,0];dv=[0,camera.fy,0];}
       if(mode==='fisheye'||mode==='equirectangular'){
         const project=p=>{
           if(mode==='equirectangular')return[camera.fx*Math.atan2(p[0],p[2])+camera.cx,camera.fy*Math.atan2(p[1],Math.hypot(p[0],p[2]))+camera.cy];
           const r=Math.hypot(p[0],p[1]),th=Math.atan2(r,p[2]),q=th*th,k=camera.distortion||[0,0,0,0],td=th*(1+q*(k[0]+q*(k[1]+q*(k[2]+q*k[3]))));
-          return[camera.fx*p[0]*td/r+camera.cx,camera.fy*p[1]*td/r+camera.cy];
+          const rho=r>1e-12?td/r:1/p[2];
+          return[camera.fx*p[0]*rho+camera.cx,camera.fy*p[1]*rho+camera.cy];
         };
         [px,py]=project(t);
         for(let axis=0;axis<3;axis++){
@@ -76,7 +84,12 @@ function oracle(m,camera,x,y) {
       const ua=axes.map((a,i)=>dot(a,du)*s[i]),va=axes.map((a,i)=>dot(a,dv)*s[i]);
       let a=dot(ua,ua),b=dot(ua,va),c=dot(va,va);const det0=Math.max(1e-6,a*c-b*b);
       const mip=m.filterMode==='mip2d'||m.filterMode==='mip',k=mip?.1:.3;a+=k;c+=k;
-      const det=a*c-b*b;if(mip)opacity*=Math.sqrt(det0/Math.max(1e-6,det));
+      const filteredDet=a*c-b*b;if(mip)opacity*=Math.sqrt(det0/Math.max(1e-6,filteredDet));
+      // Independent eigensolve of the filtered covariance. The cap changes
+      // its support, while opacity compensation remains based on filteredDet.
+      const lambda=(a+c+Math.hypot(a-c,2*b))/2,limit=Math.min(1024,camera.width,camera.height);
+      if(Number.isFinite(lambda)&&8*lambda>limit*limit){const q=limit*limit/(8*lambda);a*=q;b*=q;c*=q;}
+      const det=a*c-b*b;
       let dx=x-px;const dy=y-py;if(mode==='equirectangular')dx-=Math.round(dx/camera.width)*camera.width;distance=(c*dx*dx-2*b*dx*dy+a*dy*dy)/det;
     }
     const alpha=Math.min(.99,opacity*Math.exp(-.5*distance));if(alpha<1/255)continue;
@@ -120,6 +133,71 @@ try{
     const c={...cam,model:'equirectangular',fx:cam.width/(2*Math.PI),fy:cam.height/Math.PI,cx:cam.width/2,cy:cam.height/2};
     const m=model([{p:[.02,.05,-2],s:[4,2,1],alpha:.8,color:[.3,.7,.9]}]);await r.setModel(m);r.render(c,{background:[0,0,0]});const p=await r.readPixels();
     for(let x=0;x<c.width;x+=3){const expected=oracle(m,c,x,28);for(let a=0;a<3;a++)assert(Math.abs(p[(28*c.width+x)*4+a]-expected[a])<=2,`Seam duplicate at ${x}`);}
+  });
+  await test('EWA footprint cap: covariance, bounds, aspect ratio and uncapped Mip compensation',async()=>{
+    for(const [width,height] of [[65,57],[41,67],[1152,1088]])for(const filter of ['classic','mip2d','mip3d','mip']){
+      const c={...cam,model:'orthographic',width,height,fx:40,fy:40,cx:Math.floor(width/2),cy:Math.floor(height/2)};
+      const limit=Math.min(1024,width,height),variance=limit*limit/8,k=['mip2d','mip'].includes(filter)?.1:.3;
+      const items=[
+        {p:[0,0,2],s:[limit/20,limit/80,.1],q:[Math.cos(Math.PI/8),0,0,Math.sin(Math.PI/8)],alpha:.8},
+        {p:[0,0,2],s:[limit/20,limit/20,.1],alpha:.8},
+        ...[.999,1.001].map(f=>({p:[0,0,2],s:[Math.sqrt((variance*f-k)/1600),.01,.01],alpha:.8})),
+      ];
+      const m=model(items,'3dgs',filter);await r.setModel(m);r.render(c,{background:[0,0,0]});
+      const output=r.device.createBuffer({size:m.count*96,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      const enc=r.device.createCommandEncoder();enc.copyBufferToBuffer(r.state.projected,0,output,0,m.count*96);r.device.queue.submit([enc.finish()]);
+      await output.mapAsync(GPUMapMode.READ);const projected=new Float32Array(output.getMappedRange()).slice();output.destroy();
+      for(let id=0;id<m.count;id++){
+        const p=projected.subarray(id*24,id*24+24),sx=m.data[id*12+4]*40,sy=m.data[id*12+5]*40;
+        const angle=id===0?Math.PI/4:0,cs=Math.cos(angle),sn=Math.sin(angle);
+        const raw=[sx*sx*cs*cs+sy*sy*sn*sn,(sx*sx-sy*sy)*cs*sn,sx*sx*sn*sn+sy*sy*cs*cs];
+        const filtered=[raw[0]+k,raw[1],raw[2]+k],lambda=(filtered[0]+filtered[2]+Math.hypot(filtered[0]-filtered[2],2*filtered[1]))/2;
+        const q=Math.min(1,variance/lambda),expected=filtered.map(v=>v*q),invDet=p[6]*p[12]-p[7]*p[7];
+        const got=[p[12]/invDet,-p[7]/invDet,p[6]/invDet];
+        got.forEach((v,i)=>assert(Math.abs(v-expected[i])<Math.max(1e-4,Math.abs(expected[i])*2e-4),`Cap covariance ${width}/${height}/${filter}/${id}/${i}: ${v} vs ${expected[i]}`));
+        const alpha=m.data[id*12+3]*(k===.1?Math.sqrt(Math.max(1e-6,raw[0]*raw[2]-raw[1]**2)/Math.max(1e-6,filtered[0]*filtered[2]-filtered[1]**2)):1);
+        assert(Math.abs(p[11]-alpha)<2e-5,'Footprint cap changed opacity compensation');
+        const th=2*Math.log(alpha*255),extent=[Math.sqrt(th*expected[0])+1,Math.sqrt(th*expected[2])+1];
+        assert(Math.abs(p[2]-p[0]-2*extent[0])<.02&&Math.abs(p[3]-p[1]-2*extent[1])<.02,'Bounds did not use capped covariance');
+      }
+    }
+  });
+  for(const mode of ['pinhole','orthographic','fisheye','equirectangular'])for(const filter of ['classic','mip2d','mip3d','mip'])await test(`Large EWA ${mode}/${filter}: capped pixels vs oracle`,async()=>{
+    const c={...cam,model:mode,distortion:[.05,-.01,.002,0]};
+    if(mode==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
+    const m=model([{p:[.1,.1,1],s:[4,.3,.2],q:[.9,.1,.1,.3],alpha:.8,color:[.8,.3,.6]}],'3dgs',filter);
+    await r.setModel(m);r.render(c,{background:[0,0,0]});const pixels=await r.readPixels();let maxError=0;
+    for(let y=0;y<c.height;y+=3)for(let x=0;x<c.width;x+=3){const expected=oracle(m,c,x,y);for(let a=0;a<3;a++)maxError=Math.max(maxError,Math.abs(pixels[(y*c.width+x)*4+a]-expected[a]));}
+    assert(maxError<=2,`Capped EWA pixel mismatch: ${maxError}`);
+  });
+  await test('Radial sorting for central cameras, Z sorting for orthographic GS/GUT',async()=>{
+    for(const method of ['3dgs','3dgut'])for(const mode of ['pinhole','orthographic','fisheye','equirectangular'])for(const compact of [false,true]){
+      const c={...cam,model:mode,fx:20,fy:20,cx:32,cy:28};
+      if(mode==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
+      // ID 0 is nearer by Z, farther radially; IDs 0/2 have identical depth
+      // and overlap ID 1. A translated eye catches world-space distance keys.
+      c.worldToCamera=lookAtCV([10,0,0],[10,0,2]);
+      const m=model([{p:[11.5,0,2],s:[.5,.5,.5],alpha:.8,color:[1,0,0]},
+        {p:[10,0,2.2],s:[.5,.5,.5],alpha:.8,color:[0,1,0]},
+        {p:[11.5,0,2],s:[.5,.5,.5],alpha:.3,color:[0,0,1]}],method);
+      await r.setModel(m,{spatialBlocks:true});r.render(c,{compact,background:[0,0,0]});
+      const output=r.device.createBuffer({size:24,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      const enc=r.device.createCommandEncoder();enc.copyBufferToBuffer(r.state.keys[compact?1:0],0,output,0,24);r.device.queue.submit([enc.finish()]);
+      await output.mapAsync(GPUMapMode.READ);const got=new Uint32Array(output.getMappedRange()).slice();output.destroy();
+      const expected=mode==='orthographic'?[1,0,2]:[0,2,1];
+      // Spatial storage may reorder IDs; resolve sorted IDs through the
+      // uploaded attributes, including opacity to distinguish the depth tie.
+      const attrs=r.device.createBuffer({size:m.data.byteLength,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      const read=r.device.createCommandEncoder();read.copyBufferToBuffer(r.state.attributes,0,attrs,0,m.data.byteLength);r.device.queue.submit([read.finish()]);await attrs.mapAsync(GPUMapMode.READ);
+      const data=new Float32Array(attrs.getMappedRange()).slice();attrs.destroy();
+      expected.forEach((original,i)=>{
+        const actual=got[i*2+1];
+        assert(data[actual*12]===m.data[original*12]&&data[actual*12+3]===m.data[original*12+3],`${method}/${mode}/${compact}: wrong radial/Z order or unstable tie`);
+      });
+      const pixels=await r.readPixels();let maxError=0;
+      for(let y=20;y<36;y+=3)for(let x=24;x<45;x+=3){const ref=oracle(m,c,x,y);for(let a=0;a<3;a++)maxError=Math.max(maxError,Math.abs(pixels[(y*c.width+x)*4+a]-ref[a]));}
+      assert(maxError<=2,`${method}/${mode}/${compact}: radial compositing differs from oracle: ${maxError}`);
+    }
   });
   await test('GUT near-camera support remains conservative',async()=>{
     const m=model([{p:[.15,.1,.25],s:[.35,.4,.3],q:[.8,.1,.2,.3],alpha:.85}],'3dgut');await r.setModel(m);r.render(cam,{background:[0,0,0]});const p=await r.readPixels();
@@ -326,12 +404,15 @@ try{
     // reveals green. Reprojection must not leave red at the old pixel location.
     const items=[{p:[0,0,2],s:[.18,.35,.05],alpha:.99,color:[1,0,0]},
       {p:[0,0,4],s:[2,2,.05],alpha:.99,color:[0,1,0]}];
-    await r.setModel(model(items));
+    const m=model(items);await r.setModel(m);
     for(let seed=0;seed<8;seed++)r.render(c,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:seed});
     const moved={...c,worldToCamera:lookAtCV([.7,0,0],[.7,0,2])};
     r.render(moved,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:12});
     const moving=await r.readPixels({exact:false}),i=(16*49+24)*4;
-    assert(moving[i]<25&&moving[i+1]>220,`Disocclusion retained red history: ${moving.slice(i,i+4)}`);
+    // The background ellipse is now capped too; its revealed green response
+    // is lower than the old full-screen splat. Compare against that response.
+    const expectedGreen=oracle(m,moved,24,16)[1];
+    assert(moving[i]<25&&Math.abs(moving[i+1]-expectedGreen)<35,`Disocclusion retained red history or lost background: ${moving.slice(i,i+4)} vs green ${expectedGreen}`);
     r.render(moved,{transparency:'stochastic',reconstruction:'temporal',stochasticSeed:12,resetHistory:true});
     assert(!r.reconstruction.historyAccepted,'Explicit reset retained history');
     const reset=await r.readPixels({exact:false});

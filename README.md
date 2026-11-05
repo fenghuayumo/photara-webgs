@@ -109,13 +109,20 @@ property float filter_3D
 | classic / mip3d | 0.3 | 关闭 |
 | mip2d / mip | 0.1 | `sqrt(detBefore/detAfter)` |
 
+3DGS 在加入上述滤波核后同步 Studio 的 EWA 足迹限制：令
+`L = min(1024, width, height)`，当最大特征值 `λmax > L²/8` 时，
+将整个二维 covariance 乘以 `L²/(8λmax)`，保持椭圆方向和长短轴比例。
+这限制的是 `sqrt(8λmax)`；实际绘制边界仍按透明度的 `1/255` 等值线计算，
+并保留像素 padding。Mip2D 能量补偿使用限制前的 covariance，不因足迹缩小而增加透明度。
+该规则覆盖针孔、正交、鱼眼和全景的 3DGS；3DGUT 保持三维射线支撑规则。
+
 3DGUT 在线性相机使用七点 UT（中心权重 1/4，其余 1/8）加保守支撑范围；鱼眼使用有限 alpha 支撑椭球的切线区间，全景使用包围球的经纬角域。片元阶段计算局部空间射线最近点响应，不复用二维 Gaussian 响应，也不额外添加 3DGS 的 Mip2D 处理。非线性相机射线以 RGBA32Float 缓存，只在内参、畸变或分辨率变化时重建；移动相机复用相机空间射线。SH 使用 `center-eye` 方向、INRIA 常量，结果下限为 0，最终显示不额外添加 tone mapping/gamma。
 
 ## GPU 管线和已知边界
 
 1. 每个 Gaussian 做 GPU 可见性判断、SH、3DGS 投影或 GUT 预处理。
 2. 8 轮稳定的 4-bit LSD radix sort。组内并行 scan → 各 digit 的工作组前缀 → scatter；没有逐帧 CPU 排序或 readback，不依赖 subgroup 扩展。
-3. 按远到近绘制实例化 quad，premultiplied alpha blending。3DGS 针孔/正交使用相机 Z，全景和 3DGUT 使用相机距离。
+3. 按远到近绘制实例化 quad，premultiplied alpha blending。3DGS / 3DGUT 的针孔、鱼眼和全景均按相机空间中心的径向距离排序；正交相机按 Z 排序，与 Studio 共享光栅器一致。同距离保留原始 ID 的稳定顺序。
 4. RGBA16Float 累积，最后直接呈现；截图时显式转换为 RGBA8。
 
 首版的明确边界：
@@ -152,6 +159,10 @@ npm run test:gpu
 基础测试无依赖。GPU 测试需要 Playwright：若环境没有预装，运行 `npm install --no-save playwright`，然后 `npx playwright install chromium`。`BROWSER_EXECUTABLE` 可指定浏览器路径；`PLAYWRIGHT_MODULE_PATH` 可指定已有的 Playwright 包目录。本机 Windows 默认优先使用已安装 Edge。
 
 GPU 检查包含独立 CPU oracle 像素对比、两个模型与所有 filter 模式、非平凡外参和四元数、四种相机、数值 Jacobian、全景接缝、GUT 近相机覆盖、超过 256 个工作组的 radix prefix 和稳定排序、SH、readback padding、worker 加载取消及资源生命周期。
+
+2026-11-05 同步 Studio 的 EWA 足迹限制和径向排序。新增 GPU 回归覆盖限制阈值两侧、
+旋转各向异性与各向同性 covariance、1024 像素上限、横竖分辨率、四种滤波/相机的像素响应，
+以及径向距离与 Z 顺序相反时的 GS/GUT 排序、稳定同距、空间重排和可见点压缩路径。
 
 测试结果及桌面/手机截图写入被 Git 忽略的 `test-results/`。开发服务与测试服务分别使用端口 4173 / 4174。
 

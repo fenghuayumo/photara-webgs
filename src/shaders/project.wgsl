@@ -58,6 +58,18 @@ fn ellipsoidSlope(v: f32, z: f32, crossCov: f32, vv: f32, zz: f32) -> vec2f {
     let extent = sqrt(discriminant)/denominator;
     return vec2f(center-extent,center+extent);
 }
+// Match splat_drender's EWA footprint policy, including the screen kernel.
+// sqrt(8 * lambda_max) is capped at min(1024, width, height). Scale the
+// entire covariance to preserve ellipse orientation and axis ratio.
+fn capScreenCovariance(cov: vec3f) -> vec3f {
+    let radius = length(vec2f(0.5*(cov.x-cov.z),cov.y));
+    let lambda = 0.5*cov.x+0.5*cov.z+radius;
+    let limit = min(1024.0,min(cam.viewport.x,cam.viewport.y));
+    let variance = 0.125*limit*limit;
+    let finite = (bitcast<u32>(lambda)&0x7f800000u) != 0x7f800000u;
+    if (lambda > variance && finite) { return cov*(variance/lambda); }
+    return cov;
+}
 fn nonlinearBounds(t: vec3f, radius: f32, a: vec3f, b: vec3f, c: vec3f, threshold: f32) -> vec4f {
     let full = vec4f(vec2f(-1),cam.viewport.xy+1.0);
     let distance = length(t);
@@ -216,12 +228,16 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
         let raw = vec3f(dot(u,u),dot(u,v),dot(v,v));
         let mip2d = cam.config.w == 1u || cam.config.w == 3u;
         let kernel = select(0.3,0.1,mip2d);
-        let cov = raw+vec3f(kernel,0,kernel);
-        let det = cov.x*cov.z-cov.y*cov.y;
-        if (!(det > 0.0)) { return; }
-        let compensation = select(1.0,sqrt(max(1e-6,raw.x*raw.z-raw.y*raw.y)/max(1e-6,det)),mip2d);
+        let filtered = raw+vec3f(kernel,0,kernel);
+        let filteredDet = filtered.x*filtered.z-filtered.y*filtered.y;
+        if (!(filteredDet > 0.0)) { return; }
+        // Mip compensation uses the uncapped covariance, as in Studio.
+        let compensation = select(1.0,sqrt(max(1e-6,raw.x*raw.z-raw.y*raw.y)/max(1e-6,filteredDet)),mip2d);
         out.color.w *= compensation;
         if (out.color.w < ALPHA_FLOOR) { return; }
+        let cov = capScreenCovariance(filtered);
+        let det = cov.x*cov.z-cov.y*cov.y;
+        if (!(det > 0.0)) { return; }
         let th = max(0.0,2.0*log(out.color.w/ALPHA_FLOOR));
         let e = sqrt(th*cov.xz)+1.0;
         out.bounds = vec4f(p.pixel-e,p.pixel+e);
@@ -235,7 +251,9 @@ fn main(@builtin(global_invocation_id) tid: vec3u) {
     // Avoid reading/evaluating SH for Gaussians rejected by screen bounds.
     out.color = vec4f(colorSH(original,g.centerOpacity.xyz),out.color.w);
     projected[id] = out;
-    let depth = select(t.z,length(t),cam.config.z==1u || cam.lens.x==3u);
+    // Central cameras use radial ordering for both GS and GUT. Parallel
+    // orthographic rays retain camera-Z ordering, matching splat_drender.
+    let depth = select(length(t),t.z,cam.lens.x==1u);
     // Positive depth IEEE bits are monotonic. Invert for back-to-front draw.
     keys[original] = vec2u(~bitcast<u32>(depth),id);
 }

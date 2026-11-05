@@ -128,7 +128,10 @@ try {
     await page.locator('photara-viewer').locator('[data-mode="fly"]').click();
     const flyPose=await page.evaluate(()=>Array.from(document.querySelector('photara-viewer').viewer.controls.view()));
     if(pose.some((v,i)=>v!==flyPose[i]))throw new Error('Switch to fly changed camera pose');
-    await page.locator('photara-viewer').locator('[data-speed]').selectOption('4');
+    await page.locator('photara-viewer').locator('[data-speed]').evaluate(input=>{
+      input.value=String(Math.log10(4));input.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    if(await page.evaluate(()=>document.querySelector('photara-viewer').viewer.controls.speed!==4))throw new Error('Fly speed slider did not select 4x');
     const flyWheel=await page.evaluate(()=>{
       const c=document.querySelector('photara-viewer').viewer.controls;
       return {target:[...c.target],radius:c.radius};
@@ -167,7 +170,9 @@ try {
     await page.locator('photara-viewer').locator('[data-mode="fly"][aria-pressed="true"]').waitFor();
     await page.keyboard.press('r');
     // Double-click from fly must return to orbit after a successful pick.
-    await page.locator('photara-viewer').locator('[data-speed]').selectOption('1');
+    await page.locator('photara-viewer').locator('[data-speed]').evaluate(input=>{
+      input.value='0';input.dispatchEvent(new Event('input',{bubbles:true}));
+    });
     await canvas.dblclick({position:{x:focus.x,y:focus.y}});
     await page.locator('photara-viewer').locator('[data-mode="orbit"][aria-pressed="true"]').waitFor();
     await page.waitForFunction(()=>!document.querySelector('photara-viewer').viewer.controls.transition);
