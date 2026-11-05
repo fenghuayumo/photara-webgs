@@ -239,13 +239,25 @@ try {
       await toggle.click();
       if(await toggle.getAttribute('aria-label')!==(chinese?'显示设置':'Show settings'))throw new Error('Dynamic label not localized');
       await toggle.click();
-      if(!chinese&&await localized.evaluate(()=>/[\u4e00-\u9fff]/.test(document.body.innerText+document.querySelector('photara-viewer').shadowRoot.textContent)))throw new Error(`Untranslated text: ${locale}`);
+      if(!chinese&&await localized.evaluate(()=>/[\u4e00-\u9fff]/.test((document.body.innerText+document.querySelector('photara-viewer').shadowRoot.textContent).replaceAll('中文',''))))throw new Error(`Untranslated text: ${locale}`);
       if(await localized.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error(`Localized mobile overflow: ${locale}`);
       await localized.locator('photara-viewer').locator('[data-demo]').click();
       await localized.waitForFunction(()=>document.querySelector('photara-viewer').viewer.renderer?.frameCount>0);
       const name=await localized.locator('photara-viewer').locator('[data-name]').textContent();
       if(name!==(chinese?'合成 Gaussian 示例':'Gaussian demo scene'))throw new Error('Demo name not localized');
       await localized.screenshot({path:fileURLToPath(new URL(`../test-results/locale-${locale}.png`,import.meta.url)),fullPage:true});
+      const override=chinese?'en':'zh-CN';
+      await localized.evaluate(()=>{window.localeRenderer=document.querySelector('photara-viewer').viewer.renderer;});
+      await localized.locator('header [data-language]').selectOption(override);
+      if(!await localized.evaluate(()=>document.querySelector('photara-viewer').viewer.renderer===window.localeRenderer))throw new Error('Language switch replaced loaded renderer');
+      if(await localized.locator('photara-viewer').locator('[data-language]').inputValue()!==override)throw new Error('Language controls out of sync');
+      if(await localized.locator('h1').textContent()!==(chinese?'Space, from a new perspective.':'空间，换一个视角。'))throw new Error('Page language did not switch');
+      if(await localized.locator('photara-viewer').locator('[data-name]').textContent()!==(chinese?'Gaussian demo scene':'合成 Gaussian 示例'))throw new Error('Loaded demo label did not switch');
+      await localized.reload();
+      await localized.waitForFunction(()=>document.querySelector('photara-viewer')?.viewer);
+      if(await localized.locator('header [data-language]').inputValue()!==override)throw new Error('Language preference was not persisted');
+      await localized.locator('photara-viewer').locator('[data-language]').selectOption('auto');
+      if(await localized.locator('h1').textContent()!==(chinese?'空间，换一个视角。':'Space, from a new perspective.'))throw new Error('Auto did not restore system language');
       await localized.close();
     }
     result.ui.push('Chinese/English system locales, fallback, dynamic labels and mobile layout');

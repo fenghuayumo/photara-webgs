@@ -108,5 +108,5 @@ export function createDemoModel({ renderMethod = '3dgs', filterMode = 'classic',
     const color = [.15 + .7 * u, .4 + .42 * v, .9 - .5 * u];
     sh.set(color.map(c => (c - .5) / SH_C0), i * 3);
   }
-  return { count, bases: 1, degree: 0, data, sh, renderMethod, filterMode, bounds: modelBounds(data), name: t('合成 Gaussian 示例'), hasFilter3D: false };
+  return { count, bases: 1, degree: 0, data, sh, renderMethod, filterMode, bounds: modelBounds(data), name: t('合成 Gaussian 示例'), isDemo: true, hasFilter3D: false };
 }

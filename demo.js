@@ -1,6 +1,7 @@
-import { t, localize } from './src/i18n.js';
+import { t, localize, onLanguageChange } from './src/i18n.js';
 import './src/index.js';
 localize(document);
+onLanguageChange(() => localize(document));
 const viewer = document.querySelector('#viewer');
 const status = document.querySelector('#tool-status');
 const capture = document.querySelector('#capture');

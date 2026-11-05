@@ -3,9 +3,31 @@ export function detectLanguage(languages = globalThis.navigator?.languages, fall
   const primary = languages?.[0] || fallback || 'en';
   return /^zh(?:-|$)/i.test(primary) ? 'zh-CN' : 'en';
 }
-export const language = detectLanguage();
+const storageKey = 'photara-language';
+const choices = ['auto', 'zh-CN', 'en'];
+let saved;
+try { saved = globalThis.localStorage?.getItem(storageKey); } catch {}
+export let languagePreference = choices.includes(saved) ? saved : 'auto';
+export let language = languagePreference === 'auto' ? detectLanguage() : languagePreference;
+const listeners = new Set();
+export function onLanguageChange(callback, { signal } = {}) {
+  if (signal?.aborted) return;
+  listeners.add(callback);
+  signal?.addEventListener('abort', () => listeners.delete(callback), { once: true });
+}
+export function setLanguage(preference) {
+  if (!choices.includes(preference)) throw new Error('Unknown language preference');
+  languagePreference = preference;
+  language = preference === 'auto' ? detectLanguage() : preference;
+  try { globalThis.localStorage?.setItem(storageKey, preference); } catch {}
+  for (const callback of listeners) callback();
+}
+globalThis.addEventListener?.('languagechange', () => {
+  if (languagePreference === 'auto') setLanguage('auto');
+});
 
 const english = {
+  '语言': 'Language', '自动': 'Auto', '语言选择': 'Language selection',
   '隐藏设置': 'Hide settings', '显示设置': 'Show settings',
   '全屏查看': 'Fullscreen', '退出全屏': 'Exit fullscreen', '退出全屏 · Esc': 'Exit fullscreen · Esc',
   '重置视角': 'Reset view', '重置视角 · R': 'Reset view · R',
@@ -57,6 +79,23 @@ const english = {
   '模型超出此设备单个 GPU buffer 的限制（{size} MiB）。': 'The model exceeds this device’s GPU buffer limit ({size} MiB).',
   'Gaussian 三维场景。{help}。V 切换模式，R 重置。': '3D Gaussian scene. {help}. V to switch modes, R to reset.',
 };
+const sources = new WeakMap();
+const reverse = new Map(Object.entries(english).map(([zh, en]) => [en, zh]));
+const boundControls = new WeakSet();
+
+function translated(target, key, value) {
+  let records = sources.get(target);
+  if (!records) { records = new Map(); sources.set(target, records); }
+  let record = records.get(key);
+  if (!record || record.rendered !== value) {
+    const text = value.trim(), source = english[text] ? text : reverse.get(text);
+    if (!source) return value;
+    record = { source, whitespace: value, text, rendered: value };
+    records.set(key, record);
+  }
+  record.rendered = record.whitespace.replace(record.text, t(record.source));
+  return record.rendered;
+}
 
 export function t(source, values = {}, locale = language) {
   const text = locale === 'zh-CN' ? source : (english[source] || source);
@@ -70,14 +109,22 @@ export function localize(root) {
   while (walker.nextNode()) {
     const node = walker.currentNode;
     if (['SCRIPT', 'STYLE', 'PRE', 'CODE'].includes(node.parentElement?.tagName)) continue;
-    const source = node.textContent.trim();
-    if (english[source]) node.textContent = node.textContent.replace(source, t(source));
+    // Model filenames are user data, not interface labels.
+    if (node.parentElement?.matches('[data-name]')) continue;
+    node.textContent = translated(node, 'text', node.textContent);
   }
   for (const element of root.querySelectorAll('*')) {
     for (const attribute of ['aria-label', 'title', 'aria-valuetext', 'content']) {
       const source = element.getAttribute(attribute);
-      if (english[source]) element.setAttribute(attribute, t(source));
+      if (source) element.setAttribute(attribute, translated(element, attribute, source));
     }
   }
   (root.documentElement || root.querySelector('.viewer'))?.setAttribute('lang', language);
+  for (const control of root.querySelectorAll('[data-language]')) {
+    control.value = languagePreference;
+    if (!boundControls.has(control)) {
+      control.addEventListener('change', () => setLanguage(control.value));
+      boundControls.add(control);
+    }
+  }
 }

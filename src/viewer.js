@@ -1,4 +1,4 @@
-import { t, localize, language } from './i18n.js';
+import { t, localize, language, onLanguageChange } from './i18n.js';
 import { GaussianRenderer } from './renderer.js';
 import { PlyLoader } from './loader.js';
 import { OrbitControls } from './controls.js';
@@ -21,6 +21,7 @@ const template = `
       <div class="metadata" aria-label="模型信息"><span data-count>尚未加载模型</span><span data-method>—</span><span data-filter>—</span></div>
     </div>
     <div class="navigation" aria-label="相机控制">
+      <label class="render-quality">语言 <select data-language aria-label="语言选择"><option value="auto">自动</option><option value="zh-CN">中文</option><option value="en">English</option></select></label>
       <div class="mode-switch" role="group" aria-label="相机模式"><button type="button" data-mode="orbit" aria-pressed="true">转台</button><button type="button" data-mode="fly" aria-pressed="false">自由漫游</button></div>
       <label class="fly-speed" title="控制 WASD、Q/E 和漫游滚轮的移动速度">漫游速度 <input type="range" data-speed aria-label="漫游移动速度" aria-valuetext="0.25 倍" min="-2" max="1" step="0.001" value="-0.602"><output data-speed-value>0.25×</output></label>
       <span class="navigation-key">V 切换模式</span>
@@ -99,6 +100,12 @@ export class GaussianViewer {
     this.setControlMode(controlMode);
     this.setRenderingMode(renderingMode);
     this.setReconstructionMode(reconstruction);
+    onLanguageChange(() => {
+      localize(root); this._updateNavigation();
+      if (this.modelInfo) root.querySelector('[data-count]').textContent = `${this.modelInfo.count.toLocaleString(language)} Gaussians`;
+      if (this.modelInfo?.isDemo) root.querySelector('[data-name]').textContent = t('合成 Gaussian 示例');
+      this.invalidate();
+    }, { signal: this.abort.signal });
   }
   isFullscreen() { return this.root.fullscreenElement === this.container || document.fullscreenElement === this.container; }
   setReconstructionMode(mode) {
@@ -158,7 +165,7 @@ export class GaussianViewer {
       });
       this.uploadQueue = upload;
       if (!await upload || generation !== this.generation || this.disposed) return;
-      this.modelInfo = { ...renderer.model, name: model.name, hasFilter3D: model.hasFilter3D, bounds: model.bounds || modelBounds(model.data) };
+      this.modelInfo = { ...renderer.model, name: model.name, isDemo: model.isDemo === true, hasFilter3D: model.hasFilter3D, bounds: model.bounds || modelBounds(model.data) };
       this.calibratedCamera = null; this.controls.enabled = true; this.controls.fit(this.modelInfo.bounds);
       this._updateNavigation();
       this.root.querySelector('.empty').hidden = true;
