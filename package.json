@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Embeddable WebGPU Gaussian viewer with Photara conventions",
   "scripts": {
+    "build": "node scripts/build-static.mjs",
     "dev": "node scripts/serve.mjs",
     "test": "node --test tests/core.test.mjs tests/colmap.test.mjs tests/sog.test.mjs tests/gpu-storage.test.mjs tests/spatial-blocks.test.mjs",
     "test:sog": "node scripts/test-sog.mjs",
