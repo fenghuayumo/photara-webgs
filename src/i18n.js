@@ -27,7 +27,7 @@ globalThis.addEventListener?.('languagechange', () => {
 });
 
 const english = {
-  '语言': 'Language', '自动': 'Auto', '语言选择': 'Language selection',
+  '语言': 'Language', '自动': 'Auto', '语言选择': 'Language selection', '中文': 'Chinese', '英文': 'English',
   '隐藏设置': 'Hide settings', '显示设置': 'Show settings',
   '全屏查看': 'Fullscreen', '退出全屏': 'Exit fullscreen', '退出全屏 · Esc': 'Exit fullscreen · Esc',
   '重置视角': 'Reset view', '重置视角 · R': 'Reset view · R',

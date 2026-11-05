@@ -247,10 +247,14 @@ try {
       if(name!==(chinese?'合成 Gaussian 示例':'Gaussian demo scene'))throw new Error('Demo name not localized');
       await localized.screenshot({path:fileURLToPath(new URL(`../test-results/locale-${locale}.png`,import.meta.url)),fullPage:true});
       const override=chinese?'en':'zh-CN';
+      const optionLabels=await localized.locator('header [data-language] option').allTextContents();
+      if(optionLabels.join('/')!==(chinese?'中文/英文':'Chinese/English'))throw new Error('Language option labels not localized');
       await localized.evaluate(()=>{window.localeRenderer=document.querySelector('photara-viewer').viewer.renderer;});
       await localized.locator('header [data-language]').selectOption(override);
       if(!await localized.evaluate(()=>document.querySelector('photara-viewer').viewer.renderer===window.localeRenderer))throw new Error('Language switch replaced loaded renderer');
       if(await localized.locator('photara-viewer').locator('[data-language]').inputValue()!==override)throw new Error('Language controls out of sync');
+      const switchedLabels=await localized.locator('header [data-language] option').allTextContents();
+      if(switchedLabels.join('/')!==(chinese?'Chinese/English':'中文/英文'))throw new Error('Language option labels did not switch');
       if(await localized.locator('h1').textContent()!==(chinese?'Space, from a new perspective.':'空间，换一个视角。'))throw new Error('Page language did not switch');
       if(await localized.locator('photara-viewer').locator('[data-name]').textContent()!==(chinese?'Gaussian demo scene':'合成 Gaussian 示例'))throw new Error('Loaded demo label did not switch');
       await localized.reload();

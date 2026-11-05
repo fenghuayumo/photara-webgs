@@ -21,7 +21,7 @@ const template = `
       <div class="metadata" aria-label="模型信息"><span data-count>尚未加载模型</span><span data-method>—</span><span data-filter>—</span></div>
     </div>
     <div class="navigation" aria-label="相机控制">
-      <label class="render-quality"><select data-language aria-label="语言选择"><option value="zh-CN">CN</option><option value="en">EN</option></select></label>
+      <label class="render-quality language-control"><svg class="language-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/></svg><select data-language aria-label="语言选择"><option value="zh-CN">中文</option><option value="en">英文</option></select></label>
       <div class="mode-switch" role="group" aria-label="相机模式"><button type="button" data-mode="orbit" aria-pressed="true">转台</button><button type="button" data-mode="fly" aria-pressed="false">自由漫游</button></div>
       <label class="fly-speed" title="控制 WASD、Q/E 和漫游滚轮的移动速度">漫游速度 <input type="range" data-speed aria-label="漫游移动速度" aria-valuetext="0.25 倍" min="-2" max="1" step="0.001" value="-0.602"><output data-speed-value>0.25×</output></label>
       <span class="navigation-key">V 切换模式</span>

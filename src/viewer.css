@@ -65,7 +65,10 @@ button:hover { border-color: #ffffff40; }
 .fly-speed, .render-quality { min-height: 40px; }
 .render-quality select { background: #ffffff06; border-color: #ffffff18; }
 .render-quality select option { background: #142139; }
-.navigation select[data-language] { width: 62px; padding: 6px 8px; border: 0; border-radius: 0; background: transparent; color: var(--pg-text); }
+.language-control { gap: 4px; }
+.language-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+.navigation select[data-language] { width: 92px; padding: 7px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--pg-text); }
+.viewer[lang="zh-CN"] select[data-language] { width: 66px; }
 .navigation select[data-language]:hover { background: #ffffff08; }
 .fly-speed output { font-size: 11px; padding: 4px 7px; border: 1px solid #ffffff15; border-radius: 6px; background: #ffffff04; }
 [data-render-state] { margin-left: auto; border-radius: 20px; padding: 5px 10px; background: #8caaff0d; color: #acbeDF; }
