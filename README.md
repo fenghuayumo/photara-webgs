@@ -1,5 +1,11 @@
 # Photara WebGS
 
+## GitHub Pages 部署
+
+运行 `npm run build` 生成 `dist/`，仅包含网站资源，不打包本地模型或测试报告。
+GitHub 仓库的 Settings → Pages 中选择 GitHub Actions，推送 `master` 后自动测试、构建并部署。
+私有仓库使用 GitHub Pages 需要账号套餐支持；模型仍由访问者在浏览器本地打开。
+
 可独立嵌入静态网站的 WebGPU Gaussian 渲染器。使用原生 ES modules + WGSL，无运行时第三方依赖、不需要打包，适合后续接入 TEZOI 的 Visual Rendering 区域。
 
 ## 本地运行
