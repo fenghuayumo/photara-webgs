@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { prepareSHStorage } from './gpu-storage.js';
 import { StochasticReconstruction } from './reconstruction.js';
 import { buildSpatialBlocks } from './spatial-blocks.js';
@@ -15,9 +16,9 @@ const BLIT = `
 /** Standalone WebGPU renderer. No DOM listeners, animation loop or framework. */
 export class GaussianRenderer {
   static async create(canvas, { onError = error => console.error(error), powerPreference = 'high-performance', profiling = false } = {}) {
-    if (!globalThis.isSecureContext || !navigator.gpu) throw new Error('需要支持 WebGPU 的浏览器，并通过 HTTPS 或 localhost 打开。');
+    if (!globalThis.isSecureContext || !navigator.gpu) throw new Error(t('需要支持 WebGPU 的浏览器，并通过 HTTPS 或 localhost 打开。'));
     const adapter = await navigator.gpu.requestAdapter({ powerPreference });
-    if (!adapter) throw new Error('当前设备没有可用的 WebGPU 适配器。');
+    if (!adapter) throw new Error(t('当前设备没有可用的 WebGPU 适配器。'));
     const device = await adapter.requestDevice({ requiredFeatures: profiling && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [], requiredLimits: {
       maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
       maxBufferSize: adapter.limits.maxBufferSize,
@@ -38,7 +39,7 @@ export class GaussianRenderer {
   async _initialize() {
     const device = this.device;
     this.context = this.canvas.getContext('webgpu');
-    if (!this.context) throw new Error('Canvas 无法创建 WebGPU 上下文。');
+    if (!this.context) throw new Error(t('Canvas 无法创建 WebGPU 上下文。'));
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
     const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick', 'stochastic', 'reconstruct', 'blocks'];
@@ -132,7 +133,7 @@ export class GaussianRenderer {
     const spatial=(spatialBlocks===true||(spatialBlocks==='auto'&&n>=4096))?buildSpatialBlocks(model.data):null;
     const indexBuildMs=performance.now()-indexStart;
     const max = Math.min(d.limits.maxStorageBufferBindingSize, d.limits.maxBufferSize);
-    for (const size of [n * 96, shBytes, model.data.byteLength]) if (size > max) throw new Error(`模型超出此设备单个 GPU buffer 的限制（${Math.floor(max / 1048576)} MiB）。`);
+    for (const size of [n * 96, shBytes, model.data.byteLength]) if (size > max) throw new Error(t('模型超出此设备单个 GPU buffer 的限制（{size} MiB）。', { size: Math.floor(max / 1048576) }));
     if (groups > d.limits.maxComputeWorkgroupsPerDimension) throw new Error('Model exceeds GPU dispatch limits');
     const buffers = [];
     const buffer = (label, size, initial, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC) => {

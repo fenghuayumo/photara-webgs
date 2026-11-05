@@ -1,4 +1,6 @@
+import { t, localize } from './src/i18n.js';
 import './src/index.js';
+localize(document);
 const viewer = document.querySelector('#viewer');
 const status = document.querySelector('#tool-status');
 const capture = document.querySelector('#capture');
@@ -10,8 +12,8 @@ document.querySelector('#generate').addEventListener('click', () => {
 document.querySelector('#camera').addEventListener('change', async event => {
   const file = event.target.files[0]; event.target.value = ''; if (!file) return;
   try {
-    const camera = JSON.parse(await file.text()); viewer.setCamera(camera); status.textContent = '已应用指定相机。点击重置视角可恢复自由探索。';
-  } catch (error) { status.textContent = `相机导入失败：${error.message}`; }
+    const camera = JSON.parse(await file.text()); viewer.setCamera(camera); status.textContent = t('已应用指定相机。点击重置视角可恢复自由探索。');
+  } catch (error) { status.textContent = t('相机导入失败：{error}', { error: error.message }); }
 });
 capture.addEventListener('click', async () => {
   capture.disabled = true;

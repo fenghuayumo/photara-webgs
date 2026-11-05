@@ -228,6 +228,27 @@ try {
     await unsupported.locator('photara-viewer').locator('[data-demo]').click();
     await unsupported.locator('photara-viewer').locator('.message.is-error').filter({ hasText: 'WebGPU' }).waitFor();
     result.ui.push('Unsupported WebGPU error state'); await unsupported.close();
+    for(const locale of ['zh-CN','zh-TW','en-US','fr-FR']) {
+      const localized=await browser.newPage({locale,viewport:{width:390,height:844}});
+      const chinese=locale.startsWith('zh');
+      await localized.goto('http://localhost:4174/');
+      await localized.waitForFunction(()=>document.querySelector('photara-viewer')?.viewer);
+      const expected=chinese?'隐藏设置':'Hide settings';
+      const toggle=localized.locator('photara-viewer').locator('[data-settings-toggle]');
+      if(await toggle.getAttribute('aria-label')!==expected)throw new Error(`Wrong locale: ${locale}`);
+      await toggle.click();
+      if(await toggle.getAttribute('aria-label')!==(chinese?'显示设置':'Show settings'))throw new Error('Dynamic label not localized');
+      await toggle.click();
+      if(!chinese&&await localized.evaluate(()=>/[\u4e00-\u9fff]/.test(document.body.innerText+document.querySelector('photara-viewer').shadowRoot.textContent)))throw new Error(`Untranslated text: ${locale}`);
+      if(await localized.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error(`Localized mobile overflow: ${locale}`);
+      await localized.locator('photara-viewer').locator('[data-demo]').click();
+      await localized.waitForFunction(()=>document.querySelector('photara-viewer').viewer.renderer?.frameCount>0);
+      const name=await localized.locator('photara-viewer').locator('[data-name]').textContent();
+      if(name!==(chinese?'合成 Gaussian 示例':'Gaussian demo scene'))throw new Error('Demo name not localized');
+      await localized.screenshot({path:fileURLToPath(new URL(`../test-results/locale-${locale}.png`,import.meta.url)),fullPage:true});
+      await localized.close();
+    }
+    result.ui.push('Chinese/English system locales, fallback, dynamic labels and mobile layout');
   }
   if (messages.length) process.exitCode = 1;
   await writeFile(new URL('../test-results/gpu.json', import.meta.url), JSON.stringify({ ...result, pageErrors: messages }, null, 2));

@@ -4,6 +4,16 @@ import { parsePly } from '../src/ply.js';
 import { activateGaussian, createDemoModel, validateModel } from '../src/model.js';
 import { lookAtCV, cameraPosition, validateCamera, resizeCamera } from '../src/camera.js';
 import { OrbitControls } from '../src/controls.js';
+import { detectLanguage, t } from '../src/i18n.js';
+
+test('Language follows the primary browser preference with English fallback', () => {
+  for (const value of ['zh-CN', 'zh-TW', 'zh-HK', 'zh', 'ZH-hans']) assert.equal(detectLanguage([value]), 'zh-CN');
+  for (const value of ['en-US', 'fr-FR', 'ja-JP']) assert.equal(detectLanguage([value, 'zh-CN']), 'en');
+  assert.equal(detectLanguage([], 'zh-CN'), 'zh-CN');
+  assert.equal(detectLanguage([], ''), 'en');
+  assert.equal(t('相机导入失败：{error}', { error: 'Invalid JSON' }, 'en'), 'Camera import failed: Invalid JSON');
+  assert.equal(t('全屏查看', {}, 'zh-CN'), '全屏查看');
+});
 
 const names = ['x','y','z','f_dc_0','f_dc_1','f_dc_2','opacity','scale_0','scale_1','scale_2','rot_0','rot_1','rot_2','rot_3'];
 const values = [1,-2,3,.1,.2,.3,0,Math.log(.2),Math.log(.3),Math.log(.4),2,0,0,0];

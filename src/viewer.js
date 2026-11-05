@@ -1,3 +1,4 @@
+import { t, localize, language } from './i18n.js';
 import { GaussianRenderer } from './renderer.js';
 import { PlyLoader } from './loader.js';
 import { OrbitControls } from './controls.js';
@@ -39,7 +40,7 @@ export class GaussianViewer {
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./viewer.css', import.meta.url).href;
     root.replaceChildren(link); const container = document.createElement('div'); container.innerHTML = template; root.append(container);
     this.canvas = root.querySelector('canvas'); this.stage = root.querySelector('.stage'); this.message = root.querySelector('.message');
-    this.container = root.querySelector('.viewer');
+    this.container = root.querySelector('.viewer'); localize(root);
     this.controls = new OrbitControls(this.canvas, () => this._controlsChanged(), () => this._updateNavigation());
     const listen = (element, type, fn, options = {}) => element.addEventListener(type, fn, { ...options, signal: this.abort.signal });
     const file = root.querySelector('[data-file]');
@@ -51,7 +52,7 @@ export class GaussianViewer {
     listen(settingsToggle, 'click', () => {
       const expanded = settingsToggle.getAttribute('aria-expanded') !== 'true';
       settingsToggle.setAttribute('aria-expanded', String(expanded));
-      const label = expanded ? '隐藏设置' : '显示设置';
+      const label = expanded ? t('隐藏设置') : t('显示设置');
       settingsToggle.setAttribute('aria-label', label);
       root.querySelector('[data-settings-label]').textContent = label;
       for (const panel of root.querySelectorAll('.toolbar, .navigation, .footer')) panel.hidden = !expanded;
@@ -63,13 +64,13 @@ export class GaussianViewer {
       try {
         if (this.isFullscreen()) await document.exitFullscreen();
         else await this.container.requestFullscreen();
-      } catch (error) { this._error(new Error(`无法切换全屏：${error.message}`)); }
+      } catch (error) { this._error(new Error(t('无法切换全屏：{error}', { error: error.message }))); }
     });
     listen(document, 'fullscreenchange', () => {
       const active = this.isFullscreen();
       fullscreen.setAttribute('aria-pressed', String(active));
-      fullscreen.setAttribute('aria-label', active ? '退出全屏' : '全屏查看');
-      root.querySelector('[data-fullscreen-label]').textContent = active ? '退出全屏 · Esc' : '全屏查看';
+      fullscreen.setAttribute('aria-label', active ? t('退出全屏') : t('全屏查看'));
+      root.querySelector('[data-fullscreen-label]').textContent = active ? t('退出全屏 · Esc') : t('全屏查看');
       this.controls.stop(); this.invalidate();
     });
     root.querySelectorAll('[data-mode]').forEach(button => listen(button, 'click', () => { this.setControlMode(button.dataset.mode); this.canvas.focus({ preventScroll: true }); }));
@@ -77,7 +78,7 @@ export class GaussianViewer {
       const speed = Math.round(10 ** Number(e.target.value) * 100) / 100;
       this.controls.setSpeed(speed);
       root.querySelector('[data-speed-value]').textContent = `${speed.toFixed(2)}×`;
-      e.target.setAttribute('aria-valuetext', `${speed.toFixed(2)} 倍`);
+      e.target.setAttribute('aria-valuetext', `${speed.toFixed(2)}×`);
     });
     listen(root.querySelector('[data-quality]'), 'change', e => this.setRenderingMode(e.target.value));
     listen(root.querySelector('[data-denoise]'), 'change', e => this.setReconstructionMode(e.target.value));
@@ -122,11 +123,11 @@ export class GaussianViewer {
     const fly = this.controls.mode === 'fly', enabled = this.controls.enabled;
     this.root.querySelectorAll('[data-mode]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.mode === this.controls.mode)); button.disabled = !enabled; });
     this.root.querySelector('[data-speed]').disabled = !enabled;
-    const help = !enabled ? '标定相机 · 重置视角后恢复交互' : fly
-      ? '拖动环视 · WASD 移动 · Q/E 升降 · 滚轮前后 · Shift 加速 / Alt 慢速 · 双击回到转台'
-      : '拖动旋转 · 滚轮缩放 · 右键平移 · 双击平滑聚焦 · WASD 进入漫游';
+    const help = !enabled ? t('标定相机 · 重置视角后恢复交互') : fly
+      ? t('拖动环视 · WASD 移动 · Q/E 升降 · 滚轮前后 · Shift 加速 / Alt 慢速 · 双击回到转台')
+      : t('拖动旋转 · 滚轮缩放 · 右键平移 · 双击平滑聚焦 · WASD 进入漫游');
     this.root.querySelector('[data-help]').textContent = help;
-    this.canvas.setAttribute('aria-label', `Gaussian 三维场景。${help}。V 切换模式，R 重置。`);
+    this.canvas.setAttribute('aria-label', t('Gaussian 三维场景。{help}。V 切换模式，R 重置。', { help }));
   }
   setControlMode(mode) { if (!this.controls.enabled) return; this.controls.setMode(mode); this._updateNavigation(); }
   async initialize() {
@@ -146,7 +147,7 @@ export class GaussianViewer {
     const generation = ++this.generation;
     this.fetchAbort?.abort(); this.loader.cancel(); this.fetchAbort = new AbortController();
     const signal = this.fetchAbort.signal;
-    this.stage.setAttribute('aria-busy', 'true'); this._status('正在加载 Gaussian 场景…');
+    this.stage.setAttribute('aria-busy', 'true'); this._status(t('正在加载 Gaussian 场景…'));
     try {
       const [renderer, model] = await Promise.all([this.initialize(), getModel(signal)]);
       if (generation !== this.generation) return;
@@ -163,10 +164,10 @@ export class GaussianViewer {
       this.root.querySelector('.empty').hidden = true;
       this.root.querySelector('[data-reset]').disabled = false;
       this.root.querySelector('[data-name]').textContent = model.name;
-      this.root.querySelector('[data-count]').textContent = `${model.count.toLocaleString()} Gaussians`;
+      this.root.querySelector('[data-count]').textContent = `${model.count.toLocaleString(language)} Gaussians`;
       this.root.querySelector('[data-method]').textContent = model.renderMethod.toUpperCase();
       this.root.querySelector('[data-filter]').textContent = model.filterMode;
-      this.root.querySelector('[data-detail]').textContent = model.renderMethod === '3dgut' ? '3D 射线响应 · 保留模型原始坐标' : '保留模型原始坐标 · 文件不会上传';
+      this.root.querySelector('[data-detail]').textContent = model.renderMethod === '3dgut' ? t('3D 射线响应 · 保留模型原始坐标') : t('保留模型原始坐标 · 文件不会上传');
       this._status(''); this.invalidate(); this.options.onLoad?.(this.modelInfo);
       return this.modelInfo;
     } catch (error) {
@@ -180,20 +181,20 @@ export class GaussianViewer {
       let buffer, baseUrl;
       if (source instanceof ArrayBuffer) buffer = source;
       else if (source instanceof Blob) {
-        if (source.size > maxBytes) throw new Error('模型文件超过加载大小限制。');
+        if (source.size > maxBytes) throw new Error(t('模型文件超过加载大小限制。'));
         name ||= source.name; buffer = await source.arrayBuffer();
       } else {
         const response = await fetch(source, { signal });
         baseUrl = response.url;
-        if (!response.ok) throw new Error(`模型加载失败：HTTP ${response.status}`);
-        if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('模型文件超过加载大小限制。');
+        if (!response.ok) throw new Error(t('模型加载失败：HTTP {status}', { status: response.status }));
+        if (Number(response.headers.get('content-length')) > maxBytes) throw new Error(t('模型文件超过加载大小限制。'));
         // Enforce the size limit even for chunked responses without Content-Length.
         const reader = response.body.getReader(), chunks = []; let size = 0;
         try {
           while (true) {
             const { done, value } = await reader.read(); if (done) break;
             size += value.byteLength;
-            if (size > maxBytes) throw new Error('模型文件超过加载大小限制。');
+            if (size > maxBytes) throw new Error(t('模型文件超过加载大小限制。'));
             chunks.push(value);
           }
         } finally { await reader.cancel().catch(() => {}); }
@@ -203,7 +204,7 @@ export class GaussianViewer {
         name ||= String(source).split('/').at(-1).split('?')[0];
       }
       if (signal.aborted) throw new DOMException('Load cancelled', 'AbortError');
-      if (buffer.byteLength > maxBytes) throw new Error('模型文件超过加载大小限制。');
+      if (buffer.byteLength > maxBytes) throw new Error(t('模型文件超过加载大小限制。'));
       return this.loader.parse(buffer, { name, baseUrl, maxBytes, shLayout, ...(maxSplats === undefined ? {} : { maxSplats }) });
     });
   }
@@ -239,7 +240,7 @@ export class GaussianViewer {
       const transparency = this.renderingMode === 'movement' && !this.calibratedCamera && (active || time < this.motionUntil) ? 'stochastic' : 'sorted';
       try {
         this.renderer.render(camera, { transparency, reconstruction:this.reconstructionMode });
-        const state = this.root.querySelector('[data-render-state]'), text = transparency === 'stochastic' ? '随机预览 · 停止后恢复画质' : '完整画质';
+        const state = this.root.querySelector('[data-render-state]'), text = transparency === 'stochastic' ? t('随机预览 · 停止后恢复画质') : t('完整画质');
         if (state.textContent !== text) state.textContent = text;
       } catch (error) { this._error(error); }
       if (active) this.invalidate();
