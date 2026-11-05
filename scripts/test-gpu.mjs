@@ -252,7 +252,7 @@ try {
       await localized.evaluate(()=>{window.localeRenderer=document.querySelector('photara-viewer').viewer.renderer;});
       await localized.locator('header [data-language]').selectOption(override);
       if(!await localized.evaluate(()=>document.querySelector('photara-viewer').viewer.renderer===window.localeRenderer))throw new Error('Language switch replaced loaded renderer');
-      if(await localized.locator('photara-viewer').locator('[data-language]').inputValue()!==override)throw new Error('Language controls out of sync');
+      if(await localized.locator('photara-viewer').locator('[data-language]').count()!==0)throw new Error('Duplicate language selector in viewer');
       const switchedLabels=await localized.locator('header [data-language] option').allTextContents();
       if(switchedLabels.join('/')!==(chinese?'Chinese/English':'中文/英文'))throw new Error('Language option labels did not switch');
       if(await localized.locator('h1').textContent()!==(chinese?'Space, from a new perspective.':'空间，换一个视角。'))throw new Error('Page language did not switch');
