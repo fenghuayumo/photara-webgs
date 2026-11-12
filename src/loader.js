@@ -19,5 +19,5 @@ export class PlyLoader {
   dispose() { this.cancel(); }
 }
 
-// Both loaders auto-detect PLY and SOG content.
+// Both loaders auto-detect PLY, SOG and SOG-XT content.
 export { PlyLoader as ModelLoader };

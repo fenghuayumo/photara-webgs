@@ -12,12 +12,12 @@ const template = `
       <div class="badge"><span class="dot"></span><span data-name>Photara Gaussian Viewer</span></div>
       <button class="settings-toggle viewport-action" type="button" data-settings-toggle aria-label="隐藏设置" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 15h18m-12-6 3 3 3-3"/></svg><span class="button-tooltip" data-settings-label aria-hidden="true">隐藏设置</span></button>
       <button class="fullscreen viewport-action" type="button" data-fullscreen aria-label="全屏查看" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="expand-icon" d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path class="collapse-icon" d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg><span class="button-tooltip" data-fullscreen-label aria-hidden="true">全屏查看</span></button>
-      <div class="empty"><span class="empty-mark" aria-hidden="true">✳</span><h2>从重建，到自由探索。</h2><p>打开 PLY 或 SOG 模型，或先探索合成示例。</p><button type="button" data-demo>探索示例 <span aria-hidden="true">↗</span></button></div>
+      <div class="empty"><span class="empty-mark" aria-hidden="true">✳</span><h2>从重建，到自由探索。</h2><p>打开 PLY、SOG 或 SOG-XT 模型，或先探索合成示例。</p><button type="button" data-demo>探索示例 <span aria-hidden="true">↗</span></button></div>
       <div class="message" role="status" aria-live="polite" hidden></div>
       <button class="reset viewport-action" type="button" data-reset aria-label="重置视角" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/></svg><span class="button-tooltip" aria-hidden="true">重置视角 · R</span></button>
     </div>
     <div class="toolbar">
-      <div class="actions"><button class="primary" type="button" data-open>打开 PLY / SOG <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog" data-file hidden><button type="button" data-example>合成示例</button></div>
+      <div class="actions"><button class="primary" type="button" data-open>打开 PLY / SOG / SOG-XT <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog,.sog-xt" data-file hidden><button type="button" data-example>合成示例</button></div>
       <div class="metadata" aria-label="模型信息"><span data-count>尚未加载模型</span><span data-method>—</span><span data-filter>—</span></div>
     </div>
     <div class="navigation" aria-label="相机控制">
@@ -164,7 +164,7 @@ export class GaussianViewer {
       });
       this.uploadQueue = upload;
       if (!await upload || generation !== this.generation || this.disposed) return;
-      this.modelInfo = { ...renderer.model, name: model.name, isDemo: model.isDemo === true, hasFilter3D: model.hasFilter3D, bounds: model.bounds || modelBounds(model.data) };
+      this.modelInfo = { ...renderer.model, name: model.name, sourceFormat: model.sourceFormat, isDemo: model.isDemo === true, hasFilter3D: model.hasFilter3D, bounds: model.bounds || modelBounds(model.data) };
       this.calibratedCamera = null; this.controls.enabled = true; this.controls.fit(this.modelInfo.bounds);
       this._updateNavigation();
       this.root.querySelector('.empty').hidden = true;

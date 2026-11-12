@@ -7,8 +7,9 @@
   "scripts": {
     "build": "node scripts/build-static.mjs",
     "dev": "node scripts/serve.mjs",
-    "test": "node --test tests/core.test.mjs tests/colmap.test.mjs tests/sog.test.mjs tests/gpu-storage.test.mjs tests/spatial-blocks.test.mjs",
+    "test": "node --test tests/core.test.mjs tests/colmap.test.mjs tests/sog.test.mjs tests/gpu-storage.test.mjs tests/spatial-blocks.test.mjs tests/sog-xt.test.mjs",
     "test:sog": "node scripts/test-sog.mjs",
+    "test:sog-xt": "node scripts/test-sog-xt.mjs",
     "test:gpu": "node scripts/test-gpu.mjs"
   },
   "exports": "./src/index.js"

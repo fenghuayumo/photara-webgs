@@ -178,7 +178,7 @@ GPU 检查包含独立 CPU oracle 像素对比、两个模型与所有 filter �
 
 ## SOG v2
 
-文件选择、拖放与 `element.load()` 自动识别 `.ply` / `.sog`；URL 也支持
+文件选择、拖放与 `element.load()` 自动识别 `.ply` / `.sog` / `.sog-xt`；URL 也支持
 非打包 SOG 的 `meta.json`，附属图像相对于该 URL 加载。单独的本地
 `meta.json` 不包含图像，请使用 `.sog` ZIP 包。
 
@@ -204,6 +204,37 @@ GUT 模型，嵌入端应显式指定渲染方法。TEZOI 的场景配置保留�
 格式依据：https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/
 
 SOG 回归：`npm test`（数值与损坏数据），`npm run test:sog`（真实 WebP/PNG、ZIP、worker、GPU 出图），`npm run test:gpu`（既有渲染回归）。
+
+## SOG-XT
+
+支持 Studio 的 `.sog-xt` ZIP 包、原生格式版本 1/2、SH 0–3 阶及 `antialiased` 的 mip2d。
+文件选择、拖放和 Worker 自动识别；也支持通过 URL 加载分离的 `container_meta.yaml`，
+图像从同目录读取。本地选择请使用完整 `.sog-xt` 包，不能只选择缺少附属图像的 YAML。
+
+```js
+await element.load('./scene.sog-xt');
+await element.load('./scene/container_meta.yaml');
+// parseSog 自动分派 SOG/SOG-XT，也可以直接使用专用接口：
+import { parseSogXt, decodeSogXtPlanes } from './src/index.js';
+const model = await parseSogXt(buffer, { shLayout:'packed' });
+```
+
+实现按 Studio `formats_sog_xt.cpp` 的读写规则对齐：active mask 决定有效点及扫描顺序，
+位置为双字节量化后逆 signed-log，scale/opacity 激活，四通道四元数归一化，
+非 DC SH 为 3×5 分块调色板及二维标签。版本 1 和版本 2 的 SH 通道顺序分别处理。
+**Studio SOG-XT 直接保存 RDF 坐标，不执行普通 SOG 的 RUB 翻转。**
+默认 3DGS；格式本身不保存 3DGUT 方法，也不恢复未存储的训练字段。
+
+兼容无 `format` 字段的 reference 风格元数据：缺省 SH degree 为 3，由 active mask 推导点数，
+量化值按图像实际最小／最大 code 归一化，与 Studio 导入行为一致。
+YAML 支持本格式使用的普通 block/flow 映射、列表和数值；不支持 anchors、aliases、tags、
+merge key 或多行标量。继承现有 ZIP 的 STORE/DEFLATE、CRC、大小限制及 WebP 原始 RGBA 解码。
+packed 模式保留 SH 调色板，避免逐点展开高阶 SH。
+
+`npm run test:sog-xt` 用 Studio 原生程序导出的小型合成场景，与其解码 PLY 核对：
+SH 完全一致，属性最大绝对差约 `5.96e-8`；验证了版本 1/2、reference YAML、
+分离 URL、Worker、packed/canonical、两个渲染方法和四种镜头。
+目前这些是小型合成兼容测试，尚未完成大型真实 SOG-XT 场景的性能测量。
 
 
 ## 2026-11-02：GUT 与可见点管线优化

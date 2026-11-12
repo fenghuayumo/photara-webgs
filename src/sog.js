@@ -6,7 +6,7 @@ const SH_SIGNS = [-1, -1, 1, -1, 1, 1, -1, 1, -1, 1, -1, -1, 1, -1, 1];
 const MAX_BYTES = 1024 * 1024 * 1024;
 const safeName = name => typeof name === 'string' && name.length > 0 && !name.includes('\\') && !name.startsWith('/') && !name.includes(':') && !name.split('/').some(p => p === '..' || p === '.');
 const fail = message => { throw new Error(`SOG: ${message}`); };
-export const isSog = buffer => { const b = new Uint8Array(buffer); return b[0] === 80 && b[1] === 75 || new TextDecoder().decode(b.subarray(0, 256)).replace(/^\uFEFF/, '').trimStart().startsWith('{'); };
+export const isSog = buffer => { const b = new Uint8Array(buffer); const text=new TextDecoder().decode(b.subarray(0,1024)).replace(/^\uFEFF/,'').trimStart();return b[0]===80&&b[1]===75||text.startsWith('{')||/^(?:format|meta|ops):/m.test(text); };
 
 /** Read standard single-disk ZIP central directory; no encryption or ZIP64. */
 export async function readSogArchive(buffer, { maxBytes = MAX_BYTES } = {}) {
@@ -39,7 +39,7 @@ export async function readSogArchive(buffer, { maxBytes = MAX_BYTES } = {}) {
     if (offset + compressed > start) fail('Truncated ZIP data');
     entries.set(name, { offset, compressed, length, method, crc });
   }
-  return async name => {
+  const readFile = async name => {
     const e = entries.get(name); if (!e) fail(`Missing file: ${name}`);
     let data = b.subarray(e.offset, e.offset + e.compressed);
     if (e.method === 8) {
@@ -55,6 +55,8 @@ export async function readSogArchive(buffer, { maxBytes = MAX_BYTES } = {}) {
     if (((crc ^ 0xffffffff) >>> 0) !== e.crc) fail(`CRC mismatch: ${name}`);
     return data;
   };
+  readFile.has=name=>entries.has(name);
+  return readFile;
 }
 
 /** Decode without Canvas2D alpha premultiplication or color conversion. */
@@ -151,10 +153,17 @@ export async function parseSog(buffer, { baseUrl, decodeImage = decodeSogImage, 
   let readFile, meta;
   if (new Uint8Array(buffer)[0] === 80) {
     readFile = await readSogArchive(buffer, { maxBytes });
+    if(readFile.has('container_meta.yaml')) {
+      const {parseSogXt}=await import('./sog-xt.js');
+      return parseSogXt(buffer,{baseUrl,decodeImage,maxBytes,archiveReader:readFile,...options});
+    }
     meta = JSON.parse(new TextDecoder().decode(await readFile('meta.json')));
   } else {
-    if (!baseUrl) fail('Unbundled meta.json requires its source URL');
-    meta = JSON.parse(new TextDecoder().decode(buffer));
+    if (!baseUrl) fail('Unbundled metadata requires its source URL');
+    const text=new TextDecoder().decode(buffer).replace(/^\uFEFF/,'');
+    if(!text.trimStart().startsWith('{')){const {parseSogXt}=await import('./sog-xt.js');return parseSogXt(buffer,{baseUrl,decodeImage,maxBytes,...options});}
+    meta = JSON.parse(text);
+    if(meta?.format==='SOG-XT'||meta?.meta?.grid_side!==undefined){const {parseSogXt}=await import('./sog-xt.js');return parseSogXt(buffer,{baseUrl,decodeImage,maxBytes,...options});}
     let total = buffer.byteLength;
     readFile = async name => {
       const response = await fetch(new URL(name, baseUrl)); if (!response.ok) fail(`HTTP ${response.status}: ${name}`);

@@ -1,3 +1,4 @@
+export { parseSogXt, decodeSogXtPlanes } from './sog-xt.js';
 export { PlyLoader, ModelLoader } from './loader.js';
 export { parseSog, decodeSogPlanes, readSogArchive } from './sog.js';
 export { GaussianRenderer } from './renderer.js';
