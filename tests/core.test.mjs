@@ -5,6 +5,28 @@ import { activateGaussian, createDemoModel, validateModel } from '../src/model.j
 import { lookAtCV, cameraPosition, validateCamera, resizeCamera } from '../src/camera.js';
 import { OrbitControls } from '../src/controls.js';
 import { detectLanguage, t } from '../src/i18n.js';
+import { fillNeuralCamera } from '../src/neural-camera.js';
+
+test('Neural camera reprojection matches CV world projection and reversed depth',()=>{
+  const transform=(m,p)=>[0,1,2,3].map(row=>p.reduce((s,v,k)=>s+m[k*4+row]*v,0));
+  for(const model of ['pinhole','orthographic']){
+    const c={model,width:73,height:51,fx:32,fy:39,cx:28,cy:19,near:.03,worldToCamera:lookAtCV([.3,.2,-.1],[.1,0,3])};
+    const old={...c,worldToCamera:lookAtCV([-.2,.1,0],[0,.2,3])};
+    const u=new Float32Array(72);fillNeuralCamera(u,c,old,{valid:true,seed:17});
+    for(const world of [[0,0,2,1],[.2,-.3,4,1]]){
+      const local=transform(c.worldToCamera,world),previous=transform(old.worldToCamera,world);
+      const clip=transform(u.subarray(0,16),[local[0],-local[1],-local[2],1]);
+      const px=(clip[0]/clip[3]+1)*c.width/2,py=(1-clip[1]/clip[3])*c.height/2;
+      const divisor=model==='pinhole'?previous[2]:1;
+      assert.ok(Math.abs(px-(c.fx*previous[0]/divisor+c.cx+.5))<1e-4);
+      assert.ok(Math.abs(py-(c.fy*previous[1]/divisor+c.cy+.5))<1e-4);
+      const z=local[2],depth=c.near/(c.near+z);
+      const recovered=-(u[46]-depth*u[47])/(depth*u[45]-u[44]);
+      assert.ok(Math.abs(recovered-z)<1e-5);
+    }
+    assert.equal(u[54],1);assert.equal(u[61],0);assert.equal(u[68],17);
+  }
+});
 
 test('Language follows the primary browser preference with English fallback', () => {
   for (const value of ['zh-CN', 'zh-TW', 'zh-HK', 'zh', 'ZH-hans']) assert.equal(detectLanguage([value]), 'zh-CN');

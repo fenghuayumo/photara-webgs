@@ -429,6 +429,46 @@ try{
       results.push({name:`SVGF noise ${method}/${lens}`,mae:measures,status:'passed'});
     }
   });
+  await test('Neural Lite profiles reduce noise, reset histories and preserve sorted output',async()=>{
+    const mae=(a,b)=>a.reduce((sum,v,i)=>sum+(i%4===3?0:Math.abs(v-b[i])),0)/(a.length*.75);
+    for(const method of ['3dgs','3dgut'])for(const lens of ['pinhole','orthographic'])for(const profile of ['neural-performance','neural']){
+      const c={...cam,width:49,height:33,fx:30,fy:30,cx:24,cy:16,model:lens};
+      await r.setModel(model([{p:[0,0,2],s:[.5,.5,.5],alpha:.5,color:[1,.2,.1]}],method));
+      r.render(c,{background:[0,0,0]});const exact=await r.readPixels();let raw=0,filtered=0;
+      for(let seed=0;seed<24;seed++){
+        r.render(c,{background:[0,0,0],transparency:'stochastic',stochasticSeed:seed});raw+=mae(await r.readPixels({exact:false}),exact)/24;
+      }
+      for(let seed=0;seed<32;seed++){
+        r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:seed});
+        const pixels=await r.readPixels({exact:false});if(seed>=16)filtered+=mae(pixels,exact)/16;
+        assert(pixels.every((v,i)=>i%4!==3||v===255),'Neural output alpha changed');
+      }
+      assert(filtered<raw*.5,`Neural noise reduction ${profile}/${method}/${lens}: ${filtered}/${raw}`);
+      const timing=await r.readTimings();if(timing)assert(timing.neural_ms>0,'Missing neural GPU timing');
+      for(const changed of [{...c,fx:31},c]){
+        r.render(changed,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:7});
+        assert(!r.reconstruction.historyAccepted,'Neural intrinsics retained old history');
+      }
+      r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:7,resetHistory:true});
+      const reset=await r.readPixels({exact:false});assert(!r.reconstruction.historyAccepted,'Neural reset failed');
+      r.reconstruction.reset();r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:7});
+      assert((await r.readPixels({exact:false})).every((v,i)=>v===reset[i]),'Neural hidden state survived reset');
+      const bytes=r.reconstruction.neural.bytes;assert(Number.isFinite(bytes)&&bytes>49*33*16,'Neural memory unaccounted');
+      r.render(c,{transparency:'stochastic',reconstruction:'svgf'});
+      r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:7});
+      assert(!r.reconstruction.historyAccepted,'SVGF -> Neural retained history');
+      assert((await r.readPixels({exact:false})).every((v,i)=>v===reset[i]),'Mode switching leaked history');
+      assert((await r.readPixels()).every((v,i)=>v===exact[i]),'Neural altered exact capture');
+      r.render({...c,width:51},{transparency:'stochastic',reconstruction:profile});assert(!r.reconstruction.historyAccepted,'Neural resize retained history');
+      results.push({name:`Neural Lite ${profile}/${method}/${lens}`,rawMAE:raw,filteredMAE:filtered,status:'passed'});
+    }
+    for(const lens of ['fisheye','equirectangular']){
+      let rejected=false;const c={...cam,model:lens};
+      if(lens==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
+      try{r.render(c,{transparency:'stochastic',reconstruction:'neural'});}catch(e){rejected=e.message.includes('pinhole');}
+      assert(rejected,'Neural silently accepted unsupported lens');
+    }
+  });
   await test('Reprojection disocclusion, history resets and odd viewport edges',async()=>{
     const c={...cam,width:49,height:33,fx:35,fy:35,cx:24,cy:16};
     // A red foreground patch in front of a green background; a camera truck
@@ -499,6 +539,26 @@ try{
     }
     assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
     results.push({name:'SVGF/TAA detail/trail measurements',thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
+  });
+  for(const profile of ['neural-performance','neural'])await test(`${profile} thin-detail contrast and moving disocclusion trail bounds`,async()=>{
+    const c={...cam,width:65,height:49,fx:64,fy:64,cx:32,cy:24};
+    await r.setModel(model([{p:[0,0,2],s:[.018,.5,.02],alpha:.99,color:[1,0,0]}]));
+    r.render(c,{background:[0,0,0]});const reference=await r.readPixels(),center=(24*65+32)*4;
+    for(let i=0;i<16;i++)r.render(c,{transparency:'stochastic',reconstruction:profile,stochasticSeed:i,background:[0,0,0]});
+    const filtered=await r.readPixels({exact:false}),contrast=filtered[center]/reference[center];
+    assert(contrast>.45,`Thin line contrast collapsed: ${contrast}`);
+    const restored=await r.readPixels();assert(restored.every((v,i)=>v===reference[i]),'Thin detail not restored exactly');
+    await r.setModel(model([{p:[0,0,2],s:[.18,.35,.05],alpha:.99,color:[1,0,0]},
+      {p:[0,0,4],s:[2,2,.05],alpha:.99,color:[0,1,0]}]));
+    for(let seed=0;seed<8;seed++)r.render(c,{transparency:'stochastic',reconstruction:profile,stochasticSeed:seed});
+    let maxTrail=0;
+    for(let frame=0;frame<8;frame++){
+      const x=.7+frame*.02,camera={...c,worldToCamera:lookAtCV([x,0,0],[x,0,2])};
+      r.render(camera,{transparency:'stochastic',reconstruction:profile,stochasticSeed:frame+10});
+      const pixels=await r.readPixels({exact:false});maxTrail=Math.max(maxTrail,pixels[center]);
+    }
+    assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
+    results.push({name:`${profile} detail/trail measurements`,thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
   });
   await test('Spatial blocks preserve GS pixels, stable order and visible counts at clipping boundaries',async()=>{
     let seed=81923;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};

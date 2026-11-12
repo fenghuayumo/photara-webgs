@@ -297,6 +297,8 @@ element.setRenderingMode('movement'); // 开启交互加速
 element.setRenderingMode('sorted'); // 默认完整画质
 element.setReconstructionMode('temporal'); // 交互加速时默认；可选 'spatial' / 'none'
 element.setReconstructionMode('svgf'); // 实验：方差引导滤波 + TAA
+element.setReconstructionMode('neural-performance'); // 实验：Neural Lite 性能版
+element.setReconstructionMode('neural'); // 实验：Neural Lite 质量版
 renderer.render(camera, { transparency:'stochastic' }); // 底层显式随机帧
 renderer.render(camera, { transparency:'stochastic', reconstruction:'temporal' }); // 显式去噪
 await renderer.readPixels(); // 默认强制完整排序截图
@@ -311,6 +313,10 @@ await renderer.readPixels({ exact:false }); // 诊断随机帧
 
 另有可选 [SVGF-like + TAA 实验](docs/svgf-taa.md)，包含亮度矩、三轮 à-trous 与独立
 时间稳定历史。当前三条实景短轨迹误差优于原 temporal，但仍有噪点、细节软化及额外显存成本。
+
+也可切换 [Neural Lite 神经降噪](docs/neural-denoising.md)，复用固定版本 Gaussian-Splat-Lite
+的预训练权重和原生 WebGPU 管线；质量/性能两种模式无需训练。目前只支持针孔和正交，
+鱼眼、全景的随机神经帧会显式报错。模式切换清空历史，精确截图继续完整排序。
 
 ## 查看器相机控制与双击聚焦
 

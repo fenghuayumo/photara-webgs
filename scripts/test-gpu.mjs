@@ -74,7 +74,7 @@ try {
     // focus, calibrated-camera and capture checks.
     result.ui.push('Opt-in movement rendering and exact restore after key release/reset');
     const denoise=page.locator('photara-viewer').locator('[data-denoise]');
-    for(const reconstruction of ['spatial','none','svgf','temporal']) {
+    for(const reconstruction of ['spatial','none','svgf','neural-performance','neural','temporal']) {
       await denoise.selectOption(reconstruction);
       await canvas.focus();await page.keyboard.down('w');
       await page.waitForFunction(mode=>{
@@ -88,7 +88,7 @@ try {
       const v=document.querySelector('photara-viewer').viewer;
       return performance.now()>v.motionUntil&&!v.frame&&v.renderer.lastTransparency==='sorted';
     });
-    result.ui.push('Raw/spatial/temporal/SVGF reconstruction selector and sorted restore');
+    result.ui.push('Raw/spatial/temporal/SVGF/Neural Lite selector and sorted restore');
     const before = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);
     await canvas.focus(); await page.keyboard.press('Shift+ArrowRight');
     const after = await page.evaluate(() => document.querySelector('photara-viewer').viewer.controls.yaw);

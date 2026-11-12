@@ -228,7 +228,8 @@ export class GaussianRenderer {
     validateCamera(camera);
     if (!RENDER_METHODS.includes(renderMethod) || !FILTER_MODES.includes(filterMode)) throw new Error('Unknown rendering configuration');
     if (!['sorted', 'stochastic'].includes(transparency) || !Number.isInteger(stochasticSeed) || stochasticSeed < 0 || stochasticSeed > 0xffffffff) throw new Error('Invalid transparency mode or stochastic seed');
-    if (!['none','spatial','temporal','svgf'].includes(reconstruction)) throw new Error('Unknown stochastic reconstruction');
+    if (!['none','spatial','temporal','svgf','neural','neural-performance'].includes(reconstruction)) throw new Error('Unknown stochastic reconstruction');
+    if(transparency==='stochastic'&&reconstruction.startsWith('neural')&&!['pinhole','orthographic'].includes(camera.model||'pinhole'))throw new Error('Neural denoising supports pinhole and orthographic cameras only');
     if(typeof blockCulling!=='boolean')throw new Error('Invalid blockCulling option');
     if (!Number.isFinite(scaleModifier) || scaleModifier <= 0 || background.length !== 3 || !background.every(v => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error('Invalid render options');
     const { width, height } = camera;
@@ -296,7 +297,7 @@ export class GaussianRenderer {
     if (resetHistory) this.reconstruction.reset();
     if (stochastic && reconstruction!=='none') {
       const key=JSON.stringify([camera.model||'pinhole',width,height,camera.fx,camera.fy,camera.cx,camera.cy,camera.distortion,renderMethod,filterMode,background,scaleModifier,tightBounds,compact,reconstruction,blockCulling]);
-      this.displayTexture=this.reconstruction.encode(encoder,{camera,bytes,key,mode:reconstruction,rawColor:this.texture,rawDepth:this.depthTexture,cameraUniform:this.uniform,timestamps});
+      this.displayTexture=this.reconstruction.encode(encoder,{camera,bytes,key,mode:reconstruction,rawColor:this.texture,rawDepth:this.depthTexture,cameraUniform:this.uniform,timestamps,seed:stochasticSeed});
     } else this.reconstruction.reset();
     const displayGroup=this.displayTexture===this.texture?this.presentGroup:this.device.createBindGroup({layout:this.presentPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:this.displayTexture.createView()}]});
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, displayGroup);
@@ -357,7 +358,7 @@ export class GaussianRenderer {
     try {
       await output.mapAsync(GPUMapMode.READ); const t = new BigUint64Array(output.getMappedRange());
       const ms = i => Number(t[i + 1] - t[i]) / 1e6;
-      return { block_ms:this.lastBlockCulling?ms(14):0, compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6), spatial_ms:this.lastReconstruction!=='none'?ms(10):0, temporal_ms:['temporal','svgf'].includes(this.lastReconstruction)?ms(12):0 };
+      return { block_ms:this.lastBlockCulling?ms(14):0, compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6), spatial_ms:['spatial','temporal','svgf'].includes(this.lastReconstruction)?ms(10):0, neural_ms:this.lastReconstruction?.startsWith('neural')?ms(10):0, temporal_ms:['temporal','svgf'].includes(this.lastReconstruction)?ms(12):0 };
     } finally { output.destroy(); }
   }
 
@@ -365,7 +366,7 @@ export class GaussianRenderer {
   getMemoryUsage() {
     this._check();
     const modelBuffers = this.resources.reduce((sum, buffer) => sum + buffer.size, 0);
-    const controlBuffers = (this.uniform?.size || 0) + (this.stochasticUniform?.size || 0) + (this.timestampBuffer?.size || 0) + (this.reconstruction?.uniform.size || 0) + (this.reconstruction?.svgf?.steps.reduce((sum,b)=>sum+b.size,0) || 0);
+    const controlBuffers = (this.uniform?.size || 0) + (this.stochasticUniform?.size || 0) + (this.timestampBuffer?.size || 0) + (this.reconstruction?.uniform.size || 0) + (this.reconstruction?.svgf?.steps.reduce((sum,b)=>sum+b.size,0) || 0) + (this.reconstruction?.neural?.uniformBytes || 0);
     const textures = (this.texture ? this.width * this.height * 8 : 0) +
       (this.captureTexture ? this.width * this.height * 4 : 0) + (this.rayTexture ? this.rayWidth * this.rayHeight * 16 : 0) + (this.depthTexture ? this.width * this.height * 4 : 0) + (this.reconstruction?.bytes || 0);
     return { ...this.state?.memory, modelBuffers, controlBuffers, textures, total: modelBuffers + controlBuffers + textures, shFormat: this.model?.shFormat };

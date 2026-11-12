@@ -25,7 +25,7 @@ const template = `
       <label class="fly-speed" title="控制 WASD、Q/E 和漫游滚轮的移动速度">漫游速度 <input type="range" data-speed aria-label="漫游移动速度" aria-valuetext="0.25 倍" min="-2" max="1" step="0.001" value="-0.602"><output data-speed-value>0.25×</output></label>
       <span class="navigation-key">V 切换模式</span>
       <label class="render-quality">渲染 <select data-quality aria-label="渲染质量模式"><option value="sorted">完整画质</option><option value="movement">交互加速（移动时有噪点）</option></select></label>
-      <label class="render-quality" data-denoise-label hidden>去噪 <select data-denoise aria-label="随机渲染去噪"><option value="svgf">SVGF + TAA（实验）</option><option value="temporal">空间 + 时间重投影</option><option value="spatial">仅空间重建</option><option value="none">关闭（原始采样）</option></select></label>
+      <label class="render-quality" data-denoise-label hidden>去噪 <select data-denoise aria-label="随机渲染去噪"><option value="neural">Neural Lite · 质量（实验）</option><option value="neural-performance">Neural Lite · 性能（实验）</option><option value="svgf">SVGF + TAA（实验）</option><option value="temporal">空间 + 时间重投影</option><option value="spatial">仅空间重建</option><option value="none">关闭（原始采样）</option></select></label>
       <span class="navigation-key" data-render-state aria-live="polite">完整画质</span>
     </div>
     <div class="footer"><span data-help>拖动旋转 · 滚轮缩放 · 右键平移 · 双击聚焦</span><span data-detail>文件在本机解析，不会上传。</span></div>
@@ -108,7 +108,7 @@ export class GaussianViewer {
   }
   isFullscreen() { return this.root.fullscreenElement === this.container || document.fullscreenElement === this.container; }
   setReconstructionMode(mode) {
-    if (!['none','spatial','temporal','svgf'].includes(mode)) throw new Error('Unknown stochastic reconstruction');
+    if (!['none','spatial','temporal','svgf','neural','neural-performance'].includes(mode)) throw new Error('Unknown stochastic reconstruction');
     this.reconstructionMode=mode;this.root.querySelector('[data-denoise]').value=mode;
     this.renderer?.reconstruction?.reset();this.invalidate();
   }
