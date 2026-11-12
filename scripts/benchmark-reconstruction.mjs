@@ -38,7 +38,7 @@ try {
         const t=i/(frames+7)*Math.PI*2,p=eye.map((x,a)=>x+right[a]*.15*Math.sin(t)+f[a]*.05*Math.sin(2*t));
         const c={...camera,worldToCamera:lookAtCV(p,eye.map((x,a)=>x+f[a]*2))};delete c.position;return c;
       });
-      const modes=['sorted','none','spatial','temporal'],timings={},quality={},images={};
+      const modes=['sorted','none','spatial','temporal','svgf'],timings={},quality={},images={};
       const percentile=(values,p)=>{const a=[...values].sort((a,b)=>a-b);return a[Math.min(a.length-1,Math.ceil(a.length*p)-1)];};
       // Each mode traverses uninterrupted history. Sorted/raw between temporal
       // frames would reset history and invalidate the comparison.
@@ -79,7 +79,7 @@ try {
       const restored=await r.readPixels();let restoredMaxByte=0;
       restored.forEach((v,i)=>restoredMaxByte=Math.max(restoredMaxByte,Math.abs(v-images.sorted[i])));
       r.render(camera,options);const fixed=await r.readPixels(),hash=await crypto.subtle.digest('SHA-256',fixed);
-      const montage=document.createElement('canvas');montage.width=camera.width*2;montage.height=(camera.height+30)*2;const ctx=montage.getContext('2d');
+      const montage=document.createElement('canvas');montage.width=camera.width*2;montage.height=(camera.height+30)*Math.ceil(modes.length/2);const ctx=montage.getContext('2d');
       modes.forEach((mode,index)=>{const x=index%2*camera.width,y=Math.floor(index/2)*(camera.height+30);ctx.fillStyle='#14252a';ctx.fillRect(x,y,camera.width,30);ctx.fillStyle='white';ctx.font='18px sans-serif';ctx.fillText(mode,x+10,y+22);ctx.putImageData(new ImageData(new Uint8ClampedArray(images[mode]),camera.width,camera.height),x,y+30);});
       return{timings,quality,restoredMaxByte,fixedSHA256:[...new Uint8Array(hash)].map(v=>v.toString(16).padStart(2,'0')).join(''),memory:r.getMemoryUsage(),gpuErrors,montage:montage.toDataURL('image/png').split(',')[1]};
     },{camera,method,frames});

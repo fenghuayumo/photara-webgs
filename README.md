@@ -296,6 +296,7 @@ console.log(await renderer.readBlockVisibility()); // 仅诊断使用
 element.setRenderingMode('movement'); // 开启交互加速
 element.setRenderingMode('sorted'); // 默认完整画质
 element.setReconstructionMode('temporal'); // 交互加速时默认；可选 'spatial' / 'none'
+element.setReconstructionMode('svgf'); // 实验：方差引导滤波 + TAA
 renderer.render(camera, { transparency:'stochastic' }); // 底层显式随机帧
 renderer.render(camera, { transparency:'stochastic', reconstruction:'temporal' }); // 显式去噪
 await renderer.readPixels(); // 默认强制完整排序截图
@@ -307,6 +308,9 @@ await renderer.readPixels({ exact:false }); // 诊断随机帧
 空间 + 时间重建还增加 44 bytes/pixel 纹理。完整场景运动 MAE 相比原始随机下降约
 54–61%，GPU 新增重建 pass 约 0.024–0.047 ms；细节、拖影与测量边界见
 [重建报告](docs/stochastic-reconstruction.md)。停止后的排序截图保持逐字节一致。
+
+另有可选 [SVGF-like + TAA 实验](docs/svgf-taa.md)，包含亮度矩、三轮 à-trous 与独立
+时间稳定历史。当前三条实景短轨迹误差优于原 temporal，但仍有噪点、细节软化及额外显存成本。
 
 ## 查看器相机控制与双击聚焦
 

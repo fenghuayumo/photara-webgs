@@ -398,6 +398,37 @@ try{
       assert(r.reconstruction.previous===null,'Sorted output did not reset history');
     }
   });
+  await test('SVGF/TAA reduces stochastic noise across lenses and resets both histories',async()=>{
+    const mae=(a,b)=>a.reduce((sum,v,i)=>sum+(i%4===3?0:Math.abs(v-b[i])),0)/(a.length*.75);
+    for(const method of ['3dgs','3dgut'])for(const lens of ['pinhole','orthographic','fisheye','equirectangular']){
+      const c={...cam,width:49,height:33,fx:30,fy:30,cx:24,cy:16,model:lens};
+      if(lens==='equirectangular')Object.assign(c,{fx:49/(2*Math.PI),fy:33/Math.PI,cx:49/2,cy:33/2});
+      await r.setModel(model([{p:[0,0,2],s:[.5,.5,.5],alpha:.5,color:[1,.2,.1]}],method));
+      r.render(c,{background:[0,0,0]});const exact=await r.readPixels();
+      const measures={};
+      for(const mode of ['none','temporal','svgf']){
+        r.reconstruction.reset();let error=0;
+        for(let seed=0;seed<32;seed++){
+          r.render(c,{background:[0,0,0],transparency:'stochastic',stochasticSeed:seed,reconstruction:mode});
+          const pixels=await r.readPixels({exact:false});if(seed>=16)error+=mae(pixels,exact)/16;
+          assert(pixels.every((v,i)=>i%4!==3||v===255),'Preview alpha is not opaque');
+        }
+        measures[mode]=error;
+      }
+      assert(measures.svgf<measures.none*.5,`SVGF failed to reduce noise ${JSON.stringify(measures)}`);
+      assert(r.reconstruction.historyAccepted,'SVGF rejected consecutive history');
+      r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:'svgf',stochasticSeed:9,resetHistory:true});
+      const reset=await r.readPixels({exact:false});assert(!r.reconstruction.historyAccepted,'SVGF explicit reset failed');
+      r.reconstruction.reset();r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:'svgf',stochasticSeed:9});
+      assert((await r.readPixels({exact:false})).every((v,i)=>v===reset[i]),'SVGF reset retained hidden history');
+      const restored=await r.readPixels();assert(restored.every((v,i)=>v===exact[i]),'SVGF changed exact capture');
+      r.render({...c,width:51,...(lens==='equirectangular'?{fx:51/(2*Math.PI),cx:51/2}:{})},{transparency:'stochastic',reconstruction:'svgf'});
+      assert(!r.reconstruction.historyAccepted,'SVGF resize retained history');
+      r.render(c,{transparency:'stochastic',reconstruction:'temporal'});
+      r.render(c,{transparency:'stochastic',reconstruction:'svgf'});assert(!r.reconstruction.historyAccepted,'Mode change retained SVGF history');
+      results.push({name:`SVGF noise ${method}/${lens}`,mae:measures,status:'passed'});
+    }
+  });
   await test('Reprojection disocclusion, history resets and odd viewport edges',async()=>{
     const c={...cam,width:49,height:33,fx:35,fy:35,cx:24,cy:16};
     // A red foreground patch in front of a green background; a camera truck
@@ -448,6 +479,26 @@ try{
     }
     assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
     results.push({name:'Reconstruction detail/trail measurements',thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
+  });
+  await test(`SVGF/TAA thin-detail contrast and moving disocclusion trail bounds`,async()=>{
+    const c={...cam,width:65,height:49,fx:64,fy:64,cx:32,cy:24};
+    await r.setModel(model([{p:[0,0,2],s:[.018,.5,.02],alpha:.99,color:[1,0,0]}]));
+    r.render(c,{background:[0,0,0]});const reference=await r.readPixels(),center=(24*65+32)*4;
+    for(let i=0;i<16;i++)r.render(c,{transparency:'stochastic',reconstruction:'svgf',stochasticSeed:i,background:[0,0,0]});
+    const filtered=await r.readPixels({exact:false}),contrast=filtered[center]/reference[center];
+    assert(contrast>.45,`Thin line contrast collapsed: ${contrast}`);
+    const restored=await r.readPixels();assert(restored.every((v,i)=>v===reference[i]),'Thin detail not restored exactly');
+    await r.setModel(model([{p:[0,0,2],s:[.18,.35,.05],alpha:.99,color:[1,0,0]},
+      {p:[0,0,4],s:[2,2,.05],alpha:.99,color:[0,1,0]}]));
+    for(let seed=0;seed<8;seed++)r.render(c,{transparency:'stochastic',reconstruction:'svgf',stochasticSeed:seed});
+    let maxTrail=0;
+    for(let frame=0;frame<8;frame++){
+      const x=.7+frame*.02,camera={...c,worldToCamera:lookAtCV([x,0,0],[x,0,2])};
+      r.render(camera,{transparency:'stochastic',reconstruction:'svgf',stochasticSeed:frame+10});
+      const pixels=await r.readPixels({exact:false});maxTrail=Math.max(maxTrail,pixels[center]);
+    }
+    assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
+    results.push({name:'SVGF/TAA detail/trail measurements',thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
   });
   await test('Spatial blocks preserve GS pixels, stable order and visible counts at clipping boundaries',async()=>{
     let seed=81923;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
