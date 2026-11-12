@@ -1,69 +1,81 @@
-# Neural Lite 与 SVGF 可切换实验
+# Neural Lite 质量降噪
 
-2026-11-12。交互加速的“去噪”菜单支持 SVGF + TAA、Neural Lite 性能、Neural Lite 质量，
-并保留原 temporal / spatial / none 对照。默认仍为 temporal。停止后恢复完整排序。
+2026-11-12。交互加速默认使用 Neural Lite 质量版（`neural`），去噪菜单保留 SVGF + TAA，
+也可选择原 temporal / spatial / none 作对照。渲染模式仍默认完整排序，停止移动后恢复排序，
+截图默认继续精确输出。底层 renderer 的降噪仍需显式选择。
 
-Neural Lite 使用 Gaussian-Splat-Lite 的原生 WebGPU passes 和内置训练权重，
-固定到提交 `03914d2da079360d03293bcc4e1819a797b523af`（1.8.1），无需训练或在线下载。
-它包含学习的历史可信度预测、双时间累积路径及最终稳定；质量版另使用学习的多尺度空间滤波，
-性能版使用较便宜的局部滤波。上游源码、Apache-2.0 许可、NOTICE 与修改说明保存在
-`src/vendor/gaussian-splat-lite/`，构建随 src 一起打包。
+## 独立实现与训练
 
-## 使用与适配边界
+参考 Hu 等人的 [Ultra-fast Neural Inference for Stochastic Gaussian Splatting Denoising](https://arxiv.org/abs/2609.25604)
+中双路时间累积、方差融合与稳定化的思路。这不是论文完整复现：论文主要学习历史可信度；
+我们的小网络学习空间滤波核，历史置信度使用确定性深度与颜色检查。
+
+运行时是项目自己的 WGSL compute shader、GPU 资源管理及训练脚本。
+16 输入 → 24 个 SiLU 隐藏单元 → 10 输出，共 658 个参数，FP32 权重约 2.6 KB。
+输入是 3×3 亮度、中心 RGB、较大范围颜色均值和局部方差；输出九个 softmax 邻域权重
+及与大范围均值混合的比例。只对观察到的颜色作凸组合，不直接生成 RGB。
+
+权重从零训练，不加载其他项目的代码或预训练参数。训练数据由本地模型通过本项目渲染器产生的
+随机帧／排序帧对，加上程序生成的透明覆盖、软边和细线样本组成。
+当前只使用一个本地场景，两个相机视角训练，第三个视角留出验证。
+72,000 个实景训练 patch、36,000 个验证 patch，4000 步 Adam 优化，种子 82731。
+验证单像素空间 MAE 为 5.44/255，原始随机输入为 19.04/255；这不是端到端运动指标。
+模型文件包含数据摘要，PNG 数据不纳入 Git。训练脚本依赖 PyTorch、NumPy、Pillow。
+单场景训练不代表对未见场景、其他分辨率或 Gaussian 分布均有同等效果。
+
+## 管线
+
+1. 网络预测小范围空间核，再按局部方差进行一轮较大范围残余噪声过滤。
+2. 以 3×3 第三近命中深度作重投影假设；不足三次命中时借用局部平均命中深度。
+3. 逐 bilinear tap 作 15% 相对深度检查，有效支持必须超过 25%。
+4. 原始样本与亮度矩用 Float32 纹理累积，最多 64 个有效样本。按实际混合权重更新有效
+   样本数，避免把被拒绝的历史误算成额外采样。该数量仍是启发式近似，未完整建模样本相关性。
+5. 方差和历史长度选择原始累积与神经空间结果，再用受邻域约束的显示历史稳定输出。
+   显示历史不反馈进原始颜色和矩，避免反复累积模糊。
+
+适配本项目原生 CV 相机与整数像素采样，GS/GUT 的针孔、正交、鱼眼和全景共用实现，
+全景支持水平周期寻址。模型、内参、near、尺寸、方法、背景或模式变化会拒绝旧历史；
+相机跳切也可用 `resetHistory:true`。本次修正了 near 改变没有重置历史的问题。
+不增加相机 jitter，不做 CPU 逐帧回读。
+
+重建纹理共 100 bytes/pixel：960×540 约 51.84 MB，1920×1080 约 207.36 MB，
+不含原有颜色、随机深度、截图及射线纹理。切换模式会缓存资源；resize/dispose 释放纹理。
+只使用神经模式不会分配旧 spatial/temporal 的纹理。内存统计包含权重和纹理，
+`readTimings().neural_ms` 覆盖三个计算 pass。
+
+## 本机运动测量
+
+300 万点，NVIDIA Blackwell / Edge 157，960 宽，三条针孔短轨迹。
+每模式 8 帧预热 + 24 帧采样，计时和质量分开。
+
+| 轨迹 | 原始随机 MAE | SVGF MAE / 边缘 MAE | 自研 Neural MAE / 边缘 MAE |
+| --- | ---: | ---: | ---: |
+| view0 | 19.607 | 3.903 / 16.812 | 4.269 / 16.539 |
+| view1 | 20.354 | 3.720 / 13.275 | 3.548 / 10.013 |
+| view2 | 16.740 | 2.483 / 10.652 | 3.412 / 8.622 |
+
+MAE 是相对排序图的 RGB 平均字节误差，包含噪声、偏差与模糊。神经模式边缘误差均较低，
+但整体 MAE 仅 view1 优于 SVGF，不能宣称全面更优。仍有噪点、软化与潜在拖影。
+旧版模型的测试数值不适用于本实现。[机器记录](benchmarks/neural-denoising.json)包含详细结果。
+合成细线中心对比度为排序参考的 63.1%，遮挡露出夹具旧红色最大残留 2/255。
+
+验证包含独立 CPU 网络推理对照、边界像素、八组 GS/GUT × 四镜头的噪声与历史重置、
+模式切换、精确截图、细线及遮挡露出夹具。合成测试不证明任意场景均无拖影。
 
 ```js
-element.setRenderingMode('movement');
+element.setRenderingMode('movement'); // 默认神经降噪
 element.setReconstructionMode('svgf');
-element.setReconstructionMode('neural-performance');
-element.setReconstructionMode('neural'); // 质量版
-
-renderer.render(camera, {
-  transparency:'stochastic', reconstruction:'neural',
-  resetHistory:false, // 相机跳切时设为 true
-});
+element.setReconstructionMode('neural');
+renderer.render(camera, {transparency:'stochastic', reconstruction:'neural'});
 ```
 
-同一 GPUDevice、同一 command encoder 执行，运动帧不做 CPU 像素回读，不依赖 Three.js。
-适配 CV 相机到上游 GL view convention，包含非中心主点、整数像素与 texel centre 的半像素偏移；
-深度按 `near/(near+Z)` 反解，正交也使用这一深度约定。原有展示颜色直接输入网络，
-不额外做 sRGB transfer 或 tone mapping。现阶段不添加投影 jitter、捕获 margin 或 MSAA；
-随机源仍是本项目分层采样。因此这是模型迁移试验，不是上游 viewer 的完整复刻。
-
-支持 3DGS / 3DGUT 的 pinhole 与 orthographic；鱼眼和全景随机帧显式报错，
-不静默使用错误的针孔重投影。查看器手动漫游使用针孔，标定相机继续完整排序。
-切换 SVGF、神经 profile 或其他模式，以及模型、输出尺寸、内参、背景等改变，均拒绝旧历史。
-两种神经 profile 互相切换会释放旧 profile 资源，再构建新管线；首次启用存在编译开销。
-同尺寸切到 SVGF 会缓存神经资源供切回；resize/dispose 释放纹理，内存统计包含网络 scratch、
-两个累积路径及输出。`readTimings().neural_ms` 统计神经管线 GPU 区间。
-
-## 本机实测
-
-300 万点 1023 SOG，NVIDIA Blackwell / Edge 157，960 宽针孔相机，三条短运动轨迹。
-每模式连续 8 帧预热 + 24 帧测量；质量回读与计时分开。MAE 是相对同姿态排序图的
-RGB 平均字节误差，同时包含噪声、偏差与模糊；边缘 MAE 按排序图梯度选区。
-
-| 轨迹 | SVGF MAE / 边缘 MAE | Neural 性能 | Neural 质量 |
-| --- | ---: | ---: | ---: |
-| view0 | 3.903 / 16.812 | 4.282 / 12.324 | 3.321 / 11.916 |
-| view1 | 3.720 / 13.275 | 3.906 / 8.622 | 3.106 / 7.975 |
-| view2 | 2.483 / 10.652 | 3.337 / 8.269 | 2.555 / 7.630 |
-
-神经质量版在前两条轨迹整体误差较低，第三条略高；两种神经模式的边缘误差均比 SVGF 低。
-性能版的整体 MAE 均高于 SVGF，不能宣称神经模式全面更优。实景仍可能有噪点和拖影。
-完整样本汇总见 [机器记录](benchmarks/neural-denoising.json)。短轨迹高端 GPU 结果不能
-代表手机、长时间运动或其他场景，墙钟时间接近不能用来断言没有性能成本。
-
-合成细线中心对比度：SVGF 60.3%，Neural 性能 92.5%，Neural 质量 94.4%；
-移动遮挡露出夹具的旧红色最大残留分别为 3/255、2/255、4/255。
-合成夹具仅验证指定情形，不证明所有透明层均无拖影。
-八组 GS/GUT × 针孔/正交 × 神经 profile 测试验证噪声下降、重置、尺寸和模式切换及精确截图。
-另有 CPU 相机矩阵测试、GPU/UI 测试和完整静态构建验证。
-
 ```powershell
+node scripts/export-neural-training.mjs --width 960 --output test-results/neural-training960
+python scripts/train-neural.py --data test-results/neural-training960 --steps 4000
 npm test
 npm run test:gpu
 npm run build
-node scripts/benchmark-reconstruction.mjs --methods 3dgs --widths 960 --views 3 --frames 24 --output test-results/neural-final
+node scripts/benchmark-reconstruction.mjs --methods 3dgs --widths 960 --views 3 --frames 24 --output test-results/neural-own-final
 ```
 
-对比拼图从左到右、从上到下：sorted、none、spatial、temporal、svgf、neural-performance、neural。
+对比拼图依次为 sorted、none、spatial、temporal、svgf、neural。

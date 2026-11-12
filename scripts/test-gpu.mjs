@@ -30,6 +30,8 @@ try {
     await page.goto('http://localhost:4174/');
     await page.locator('photara-viewer').locator('[data-demo]').click();
     await page.waitForFunction(() => document.querySelector('photara-viewer').viewer?.renderer?.frameCount > 0);
+    if(!await page.evaluate(()=>{const v=document.querySelector('photara-viewer').viewer;return v.reconstructionMode==='neural'&&v.root.querySelector('[data-denoise]').value==='neural';}))throw new Error('Default reconstruction is not Neural Lite quality');
+    result.ui.push('Neural Lite quality is the default reconstruction');
     const canvas = page.locator('photara-viewer').locator('canvas');
     const fullscreen = page.locator('photara-viewer').locator('[data-fullscreen]');
     const settingsToggle = page.locator('photara-viewer').locator('[data-settings-toggle]');
@@ -59,7 +61,7 @@ try {
     const quality = page.locator('photara-viewer').locator('[data-quality]');
     await quality.selectOption('movement');
     await canvas.focus(); await page.keyboard.down('w');
-    await page.waitForFunction(()=>document.querySelector('photara-viewer').viewer.renderer.lastTransparency==='stochastic');
+    await page.waitForFunction(()=>document.querySelector('photara-viewer').viewer.renderer.lastTransparency==='stochastic'&&document.querySelector('photara-viewer').viewer.renderer.lastReconstruction==='neural');
     await page.keyboard.up('w');
     await page.waitForFunction(()=>{
       const v=document.querySelector('photara-viewer').viewer;
@@ -74,7 +76,7 @@ try {
     // focus, calibrated-camera and capture checks.
     result.ui.push('Opt-in movement rendering and exact restore after key release/reset');
     const denoise=page.locator('photara-viewer').locator('[data-denoise]');
-    for(const reconstruction of ['spatial','none','svgf','neural-performance','neural','temporal']) {
+    for(const reconstruction of ['spatial','none','svgf','neural','temporal']) {
       await denoise.selectOption(reconstruction);
       await canvas.focus();await page.keyboard.down('w');
       await page.waitForFunction(mode=>{

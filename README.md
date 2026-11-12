@@ -289,16 +289,15 @@ console.log(await renderer.readBlockVisibility()); // 仅诊断使用
 “渲染”选项默认 **完整画质**。选择 **交互加速（移动时有噪点）** 后，
 移动期间跳过排序，以随机透明采样和深度测试绘制；停止后恢复完整排序画质。
 此模式不会删点或改变 SOG 数据。现已加入 2×2 分层采样、空间重建和时间重投影降噪，
-“去噪”选项可比较关闭 / 仅空间 / 空间 + 时间；移动帧仍有噪点和细节软化。
+“去噪”默认 Neural Lite 质量，可切换 SVGF / 空间 + 时间 / 仅空间 / 关闭；移动帧仍有噪点和细节软化。
 截图及标定相机继续使用完整排序。
 
 ```js
 element.setRenderingMode('movement'); // 开启交互加速
 element.setRenderingMode('sorted'); // 默认完整画质
-element.setReconstructionMode('temporal'); // 交互加速时默认；可选 'spatial' / 'none'
+element.setReconstructionMode('temporal'); // 原有时间降噪对照；可选 'spatial' / 'none'
 element.setReconstructionMode('svgf'); // 实验：方差引导滤波 + TAA
-element.setReconstructionMode('neural-performance'); // 实验：Neural Lite 性能版
-element.setReconstructionMode('neural'); // 实验：Neural Lite 质量版
+element.setReconstructionMode('neural'); // 交互加速默认：自研 Neural Lite 质量版
 renderer.render(camera, { transparency:'stochastic' }); // 底层显式随机帧
 renderer.render(camera, { transparency:'stochastic', reconstruction:'temporal' }); // 显式去噪
 await renderer.readPixels(); // 默认强制完整排序截图
@@ -314,9 +313,10 @@ await renderer.readPixels({ exact:false }); // 诊断随机帧
 另有可选 [SVGF-like + TAA 实验](docs/svgf-taa.md)，包含亮度矩、三轮 à-trous 与独立
 时间稳定历史。当前三条实景短轨迹误差优于原 temporal，但仍有噪点、细节软化及额外显存成本。
 
-也可切换 [Neural Lite 神经降噪](docs/neural-denoising.md)，复用固定版本 Gaussian-Splat-Lite
-的预训练权重和原生 WebGPU 管线；质量/性能两种模式无需训练。目前只支持针孔和正交，
-鱼眼、全景的随机神经帧会显式报错。模式切换清空历史，精确截图继续完整排序。
+交互加速默认使用[自研 Neural Lite 质量降噪](docs/neural-denoising.md)，可随时切回 SVGF。
+推理、历史管理和权重均由本项目独立实现／训练，参考论文中的双路累积与方差融合思路。
+目前权重仅用单个本地场景及程序生成数据训练，不能保证跨场景泛化；四种镜头均可运行，
+切换模式清空历史，精确截图继续完整排序。
 
 ## 查看器相机控制与双击聚焦
 

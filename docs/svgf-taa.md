@@ -1,7 +1,8 @@
 # SVGF-like + TAA 实验
 
 2026-11-12。新增 `reconstruction:'svgf'`，界面在“交互加速”的去噪选项中选择
-“SVGF + TAA（实验）”。默认仍为原来的 temporal。无需训练数据或神经网络权重。
+“SVGF + TAA（实验）”。交互加速目前默认 Neural Lite 质量版，SVGF 保留为可切换选项。
+SVGF 本身无需训练数据或神经网络权重。
 
 ## 管线
 

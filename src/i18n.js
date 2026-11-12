@@ -41,7 +41,7 @@ const english = {
   'V 切换模式': 'V to switch modes', '渲染': 'Rendering', '渲染质量模式': 'Rendering quality',
   '完整画质': 'Full quality', '交互加速（移动时有噪点）': 'Interactive (noise while moving)',
   '去噪': 'Denoising', '随机渲染去噪': 'Stochastic rendering denoising',
-  'Neural Lite · 质量（实验）': 'Neural Lite · Quality (experimental)', 'Neural Lite · 性能（实验）': 'Neural Lite · Performance (experimental)', 'SVGF + TAA（实验）': 'SVGF + TAA (experimental)', '空间 + 时间重投影': 'Spatial + temporal', '仅空间重建': 'Spatial only', '关闭（原始采样）': 'Off (raw samples)',
+  'Neural Lite · 质量（实验）': 'Neural Lite · Quality (experimental)', 'SVGF + TAA（实验）': 'SVGF + TAA (experimental)', '空间 + 时间重投影': 'Spatial + temporal', '仅空间重建': 'Spatial only', '关闭（原始采样）': 'Off (raw samples)',
   '拖动旋转 · 滚轮缩放 · 右键平移 · 双击聚焦': 'Drag to orbit · Scroll to zoom · Right-drag to pan · Double-click to focus',
   '文件在本机解析，不会上传。': 'Files are processed locally and never uploaded.',
   '标定相机 · 重置视角后恢复交互': 'Calibrated camera · Reset view to resume navigation',

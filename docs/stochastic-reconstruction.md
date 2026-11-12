@@ -2,7 +2,7 @@
 
 2026-11-02。基于已有随机渲染分支增加去噪，默认完整排序不变。
 查看器的“交互加速”中新增去噪选择：**空间 + 时间重投影 / 仅空间重建 / 关闭**。
-选择交互加速后，默认空间 + 时间重投影；原始采样可随时用于比较。
+本文记录最初的空间 + 时间方案；当前交互加速默认自研 Neural Lite 质量版，仍可切回本方案。
 
 ## 方法与边界
 
@@ -94,7 +94,7 @@ await renderer.readPixels(); // 仍为完整排序精确截图
 await renderer.readTimings(); // spatial_ms、temporal_ms 仅在执行时非零
 ```
 
-`GaussianViewer` 构造参数支持 `{reconstruction:'temporal'}`，只影响交互随机帧；
+`GaussianViewer` 当前默认 `{reconstruction:'neural'}`，可传 `'temporal'` 切回本文方案；只影响交互随机帧；
 renderer 默认 `reconstruction:'none'`，兼容原始随机帧 API 与固定 seed 测试。
 
 ```powershell

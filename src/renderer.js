@@ -1,3 +1,4 @@
+import { NeuralReconstruction } from './neural.js';
 import { t } from './i18n.js';
 import { prepareSHStorage } from './gpu-storage.js';
 import { SvgfReconstruction } from './svgf.js';
@@ -43,7 +44,7 @@ export class GaussianRenderer {
     if (!this.context) throw new Error(t('Canvas 无法创建 WebGPU 上下文。'));
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: 'srgb' });
-    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick', 'stochastic', 'reconstruct', 'blocks', 'svgf'];
+    const names = ['common', 'project', 'draw', 'radix', 'rays', 'compact', 'pick', 'stochastic', 'reconstruct', 'blocks', 'svgf', 'neural'];
     const sources = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`./shaders/${name}.wgsl`, import.meta.url));
       if (!response.ok) throw new Error(`Shader ${name}: HTTP ${response.status}`);
@@ -56,7 +57,7 @@ export class GaussianRenderer {
       if (errors.length) throw new Error(`${label}: ${errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n')}`);
       return shader;
     };
-    const [projection, draw, radix, blit, rays, compactShader, pickShader, stochasticShader, reconstructionShader, blockShader, svgfShader] = await Promise.all([
+    const [projection, draw, radix, blit, rays, compactShader, pickShader, stochasticShader, reconstructionShader, blockShader, svgfShader, neuralShader] = await Promise.all([
       module('Photara projection', sources[0] + sources[1]),
       module('Photara draw', sources[0] + sources[2]),
       module('GPU radix sort', sources[3]), module('Presentation', BLIT), module('Cached lens rays', sources[0] + sources[4]), module('Visible compaction', sources[0] + sources[5]),
@@ -65,6 +66,7 @@ export class GaussianRenderer {
       module('Stochastic reconstruction', sources[0] + sources[8]),
       module('Spatial block visibility',sources[0]+sources[9]),
       module('SVGF reconstruction',sources[0]+sources[10]),
+      module('Photara neural reconstruction',sources[0]+sources[11]),
     ]);
     this.uniform = device.createBuffer({ label: 'CV camera', size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.stochasticUniform = device.createBuffer({ label: 'Stochastic sample seed', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -87,7 +89,16 @@ export class GaussianRenderer {
       const spatial = await device.createComputePipelineAsync({layout:'auto',compute:{module:reconstructionShader,entryPoint:'spatialMain'}});
       const temporal = await device.createComputePipelineAsync({layout:'auto',compute:{module:reconstructionShader,entryPoint:'temporalMain'}});
       const [integrate,atrous,taa]=await Promise.all(['integrateMain','atrousMain','taaMain'].map(entryPoint=>device.createComputePipelineAsync({layout:'auto',compute:{module:svgfShader,entryPoint}})));
-      this.reconstruction = new StochasticReconstruction(device,spatial,temporal,new SvgfReconstruction(device,{integrate,atrous,taa}));
+      const modelResponse=await fetch(new URL('./neural-weights.json',import.meta.url));
+      if(!modelResponse.ok)throw new Error('Neural weights could not be loaded');
+      const model=await modelResponse.json();
+      if(model.version!==1||model.inputs!==16||model.hidden!==24||model.outputs!==10||model.layers?.length!==2||model.layers[0].w?.length!==384||model.layers[0].b?.length!==24||model.layers[1].w?.length!==240||model.layers[1].b?.length!==10)throw new Error('Invalid Photara neural model shape');
+      const values=new Float32Array(model.layers.flatMap(layer=>[...layer.w,...layer.b]));
+      if(!values.every(Number.isFinite))throw new Error('Invalid Photara neural weights');
+      const neuralWeights=device.createBuffer({label:'Photara trained kernel weights',size:values.byteLength,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+      device.queue.writeBuffer(neuralWeights,0,values);
+      const [neuralSpatial,neuralRefine,neuralTemporal]=await Promise.all(['spatialMain','refineMain','temporalMain'].map(entryPoint=>device.createComputePipelineAsync({layout:'auto',compute:{module:neuralShader,entryPoint}})));
+      this.reconstruction = new StochasticReconstruction(device,spatial,temporal,new SvgfReconstruction(device,{integrate,atrous,taa}),new NeuralReconstruction(device,{spatial:neuralSpatial,refine:neuralRefine,temporal:neuralTemporal},neuralWeights));
       this.projectPipeline = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: projection, entryPoint: 'main' } });
       this.clearProjectPipeline=await device.createComputePipelineAsync({layout:'auto',compute:{module:projection,entryPoint:'clearMain'}});
       this.blockPipeline=await device.createComputePipelineAsync({layout:'auto',compute:{module:blockShader,entryPoint:'main'}});
@@ -206,7 +217,7 @@ export class GaussianRenderer {
     this.reconstruction.destroyTextures(); this.displayTexture = null;
     this.rayKey = null;
     this.width = this.canvas.width = width; this.height = this.canvas.height = height;
-    this.texture = this.device.createTexture({ label: 'Linear numeric Gaussian accumulation', size: [width, height], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    this.texture = this.device.createTexture({ label: 'Linear numeric Gaussian accumulation', size: [width, height], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
     if (this.state) { this.state.drawGroup = null; this.state.stochasticGroup = null; }
     this.presentGroup = this.device.createBindGroup({ layout: this.presentPipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: this.texture.createView() }] });
   }
@@ -228,8 +239,7 @@ export class GaussianRenderer {
     validateCamera(camera);
     if (!RENDER_METHODS.includes(renderMethod) || !FILTER_MODES.includes(filterMode)) throw new Error('Unknown rendering configuration');
     if (!['sorted', 'stochastic'].includes(transparency) || !Number.isInteger(stochasticSeed) || stochasticSeed < 0 || stochasticSeed > 0xffffffff) throw new Error('Invalid transparency mode or stochastic seed');
-    if (!['none','spatial','temporal','svgf','neural','neural-performance'].includes(reconstruction)) throw new Error('Unknown stochastic reconstruction');
-    if(transparency==='stochastic'&&reconstruction.startsWith('neural')&&!['pinhole','orthographic'].includes(camera.model||'pinhole'))throw new Error('Neural denoising supports pinhole and orthographic cameras only');
+    if (!['none','spatial','temporal','svgf','neural'].includes(reconstruction)) throw new Error('Unknown stochastic reconstruction');
     if(typeof blockCulling!=='boolean')throw new Error('Invalid blockCulling option');
     if (!Number.isFinite(scaleModifier) || scaleModifier <= 0 || background.length !== 3 || !background.every(v => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error('Invalid render options');
     const { width, height } = camera;
@@ -296,8 +306,8 @@ export class GaussianRenderer {
     this.displayTexture=this.texture;
     if (resetHistory) this.reconstruction.reset();
     if (stochastic && reconstruction!=='none') {
-      const key=JSON.stringify([camera.model||'pinhole',width,height,camera.fx,camera.fy,camera.cx,camera.cy,camera.distortion,renderMethod,filterMode,background,scaleModifier,tightBounds,compact,reconstruction,blockCulling]);
-      this.displayTexture=this.reconstruction.encode(encoder,{camera,bytes,key,mode:reconstruction,rawColor:this.texture,rawDepth:this.depthTexture,cameraUniform:this.uniform,timestamps,seed:stochasticSeed});
+      const key=JSON.stringify([camera.model||'pinhole',width,height,camera.near??.2,camera.fx,camera.fy,camera.cx,camera.cy,camera.distortion,renderMethod,filterMode,background,scaleModifier,tightBounds,compact,reconstruction,blockCulling]);
+      this.displayTexture=this.reconstruction.encode(encoder,{camera,bytes,key,mode:reconstruction,rawColor:this.texture,rawDepth:this.depthTexture,cameraUniform:this.uniform,timestamps});
     } else this.reconstruction.reset();
     const displayGroup=this.displayTexture===this.texture?this.presentGroup:this.device.createBindGroup({layout:this.presentPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:this.displayTexture.createView()}]});
     this._blit(encoder, this.context.getCurrentTexture().createView(), this.presentPipeline, displayGroup);
@@ -358,7 +368,7 @@ export class GaussianRenderer {
     try {
       await output.mapAsync(GPUMapMode.READ); const t = new BigUint64Array(output.getMappedRange());
       const ms = i => Number(t[i + 1] - t[i]) / 1e6;
-      return { block_ms:this.lastBlockCulling?ms(14):0, compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6), spatial_ms:['spatial','temporal','svgf'].includes(this.lastReconstruction)?ms(10):0, neural_ms:this.lastReconstruction?.startsWith('neural')?ms(10):0, temporal_ms:['temporal','svgf'].includes(this.lastReconstruction)?ms(12):0 };
+      return { block_ms:this.lastBlockCulling?ms(14):0, compact_ms: this.lastCompact ? ms(8) : 0, rays_ms: this.raysUpdated ? ms(0) : 0, project_ms: ms(2), sort_ms: this.lastTransparency === 'stochastic' ? 0 : ms(4), draw_ms: ms(6), spatial_ms:['spatial','temporal','svgf'].includes(this.lastReconstruction)?ms(10):0, neural_ms:this.lastReconstruction==='neural'?ms(10):0, temporal_ms:['temporal','svgf'].includes(this.lastReconstruction)?ms(12):0 };
     } finally { output.destroy(); }
   }
 

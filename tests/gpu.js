@@ -429,10 +429,45 @@ try{
       results.push({name:`SVGF noise ${method}/${lens}`,mae:measures,status:'passed'});
     }
   });
+  await test('Photara learned spatial kernel matches independent CPU inference',async()=>{
+    const c={...cam,width:17,height:13,fx:20,fy:20,cx:8,cy:6};
+    await r.setModel(model([{p:[0,0,2],s:[.35,.45,.1],alpha:.5,color:[.8,.3,.1]},
+      {p:[.2,-.1,3],s:[.4,.4,.1],alpha:.7,color:[.1,.6,.9]}]));
+    r.render(c,{transparency:'stochastic',reconstruction:'neural',stochasticSeed:321,background:[.03,.04,.05]});
+    const decode=h=>{const sign=h&32768?-1:1,e=(h>>10)&31,m=h&1023;return sign*(e===0?2**-14*m/1024:2**(e-15)*(1+m/1024));};
+    const read=async texture=>{
+      const stride=Math.ceil(c.width*8/256)*256,buffer=r.device.createBuffer({size:stride*c.height,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      try{
+        const encoder=r.device.createCommandEncoder();encoder.copyTextureToBuffer({texture},{buffer,bytesPerRow:stride},[c.width,c.height]);r.device.queue.submit([encoder.finish()]);
+        await buffer.mapAsync(GPUMapMode.READ);const source=new Uint16Array(buffer.getMappedRange()),out=[];
+        for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++)out.push(Array.from(source.subarray(y*stride/2+x*4,y*stride/2+x*4+3),decode));
+        buffer.unmap();return out;
+      }finally{buffer.destroy();}
+    };
+    const raw=await read(r.texture),gpu=await read(r.reconstruction.neural.spatial);
+    const net=await(await fetch('/src/neural-weights.json')).json(),clamp=(v,max)=>Math.max(0,Math.min(v,max));
+    const at=(x,y)=>raw[clamp(y,c.height-1)*c.width+clamp(x,c.width-1)];
+    const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0),luma=c=>dot(c,[.2126,.7152,.0722]);
+    for(const [x,y] of [[0,0],[8,6],[11,8],[16,12]]){
+      const taps=[],wide=[0,0,0];
+      for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){
+        taps.push(at(x+i,y+j));const rgb=at(x+i*2,y+j*2),w=(2-Math.abs(i))*(2-Math.abs(j))/16;
+        rgb.forEach((v,a)=>wide[a]+=v*w);
+      }
+      const ls=taps.map(luma),mean=ls.reduce((s,v)=>s+v,0)/9;
+      const inputs=[...ls,...taps[4],...wide,Math.max(0,ls.reduce((s,v)=>s+v*v,0)/9-mean*mean)];
+      const layer=(input,model)=>model.b.map((b,o)=>b+dot(input,model.w.slice(o*input.length,(o+1)*input.length)));
+      const hidden=layer(inputs,net.layers[0]).map(v=>v/(1+Math.exp(-v))),out=layer(hidden,net.layers[1]);
+      const kernel=out.slice(0,9).map(v=>Math.exp(v-Math.max(...out.slice(0,9)))),sum=kernel.reduce((s,v)=>s+v,0),blend=1/(1+Math.exp(-out[9]));
+      const expected=wide.map((v,a)=>v*blend+(1-blend)*taps.reduce((s,c,i)=>s+c[a]*kernel[i]/sum,0));
+      expected.forEach((v,a)=>assert(Math.abs(v-gpu[y*c.width+x][a])<.002,`Neural CPU/GPU mismatch ${x}/${y}/${a}: ${v}/${gpu[y*c.width+x][a]}`));
+    }
+  });
   await test('Neural Lite profiles reduce noise, reset histories and preserve sorted output',async()=>{
     const mae=(a,b)=>a.reduce((sum,v,i)=>sum+(i%4===3?0:Math.abs(v-b[i])),0)/(a.length*.75);
-    for(const method of ['3dgs','3dgut'])for(const lens of ['pinhole','orthographic'])for(const profile of ['neural-performance','neural']){
+    for(const method of ['3dgs','3dgut'])for(const lens of ['pinhole','orthographic','fisheye','equirectangular'])for(const profile of ['neural']){
       const c={...cam,width:49,height:33,fx:30,fy:30,cx:24,cy:16,model:lens};
+      if(lens==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
       await r.setModel(model([{p:[0,0,2],s:[.5,.5,.5],alpha:.5,color:[1,.2,.1]}],method));
       r.render(c,{background:[0,0,0]});const exact=await r.readPixels();let raw=0,filtered=0;
       for(let seed=0;seed<24;seed++){
@@ -445,9 +480,9 @@ try{
       }
       assert(filtered<raw*.5,`Neural noise reduction ${profile}/${method}/${lens}: ${filtered}/${raw}`);
       const timing=await r.readTimings();if(timing)assert(timing.neural_ms>0,'Missing neural GPU timing');
-      for(const changed of [{...c,fx:31},c]){
+      for(const changed of [{...c,near:.02},c]){
         r.render(changed,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:7});
-        assert(!r.reconstruction.historyAccepted,'Neural intrinsics retained old history');
+        assert(!r.reconstruction.historyAccepted,'Neural near clip retained old history');
       }
       r.render(c,{background:[0,0,0],transparency:'stochastic',reconstruction:profile,stochasticSeed:7,resetHistory:true});
       const reset=await r.readPixels({exact:false});assert(!r.reconstruction.historyAccepted,'Neural reset failed');
@@ -459,14 +494,8 @@ try{
       assert(!r.reconstruction.historyAccepted,'SVGF -> Neural retained history');
       assert((await r.readPixels({exact:false})).every((v,i)=>v===reset[i]),'Mode switching leaked history');
       assert((await r.readPixels()).every((v,i)=>v===exact[i]),'Neural altered exact capture');
-      r.render({...c,width:51},{transparency:'stochastic',reconstruction:profile});assert(!r.reconstruction.historyAccepted,'Neural resize retained history');
+      r.render({...c,width:51,...(lens==='equirectangular'?{fx:51/(2*Math.PI),cx:51/2}:{})},{transparency:'stochastic',reconstruction:profile});assert(!r.reconstruction.historyAccepted,'Neural resize retained history');
       results.push({name:`Neural Lite ${profile}/${method}/${lens}`,rawMAE:raw,filteredMAE:filtered,status:'passed'});
-    }
-    for(const lens of ['fisheye','equirectangular']){
-      let rejected=false;const c={...cam,model:lens};
-      if(lens==='equirectangular')Object.assign(c,{fx:c.width/(2*Math.PI),fy:c.height/Math.PI,cx:c.width/2,cy:c.height/2});
-      try{r.render(c,{transparency:'stochastic',reconstruction:'neural'});}catch(e){rejected=e.message.includes('pinhole');}
-      assert(rejected,'Neural silently accepted unsupported lens');
     }
   });
   await test('Reprojection disocclusion, history resets and odd viewport edges',async()=>{
@@ -540,7 +569,7 @@ try{
     assert(maxTrail<25,`Red disocclusion trail persisted: ${maxTrail}`);
     results.push({name:'SVGF/TAA detail/trail measurements',thinLineContrastRatio:contrast,maxDisocclusionRedByte:maxTrail,status:'passed'});
   });
-  for(const profile of ['neural-performance','neural'])await test(`${profile} thin-detail contrast and moving disocclusion trail bounds`,async()=>{
+  for(const profile of ['neural'])await test(`${profile} thin-detail contrast and moving disocclusion trail bounds`,async()=>{
     const c={...cam,width:65,height:49,fx:64,fy:64,cx:32,cy:24};
     await r.setModel(model([{p:[0,0,2],s:[.018,.5,.02],alpha:.99,color:[1,0,0]}]));
     r.render(c,{background:[0,0,0]});const reference=await r.readPixels(),center=(24*65+32)*4;
