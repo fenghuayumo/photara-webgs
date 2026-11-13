@@ -17,7 +17,7 @@ const template = `
       <button class="reset viewport-action" type="button" data-reset aria-label="重置视角" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/></svg><span class="button-tooltip" aria-hidden="true">重置视角 · R</span></button>
     </div>
     <div class="toolbar">
-      <div class="actions"><button class="primary" type="button" data-open>打开 PLY / SOG / SOG-XT <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog,.sog-xt" data-file hidden><button type="button" data-example>合成示例</button></div>
+      <div class="actions"><button class="primary" type="button" data-open>打开3DGS模型 <span aria-hidden="true">＋</span></button><input type="file" accept=".ply,.sog,.sog-xt" data-file hidden><button type="button" data-example>合成示例</button></div>
       <div class="metadata" aria-label="模型信息"><span data-count>尚未加载模型</span><span data-method>—</span><span data-filter>—</span></div>
     </div>
     <div class="navigation" aria-label="相机控制">

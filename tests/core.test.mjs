@@ -73,7 +73,9 @@ test('activation is stable at extreme logits and clamps log scale',()=>{
   const a=activateGaussian([-100,100,0],1000,[2,0,0,0]);
   assert.equal(a.opacity,1); near(a.scales[0],Math.exp(-20)); near(a.scales[1],Math.exp(20),1e-3);
   assert.equal(activateGaussian([0,0,0],-1000,[1,0,0,0]).opacity,0);
-  assert.throws(()=>activateGaussian([0,0,0],0,[0,0,0,0]),/quaternion/);
+  assert.deepEqual(activateGaussian([0,0,0],0,[0,0,0,0]).quaternion,[1,0,0,0]);
+  assert.deepEqual(activateGaussian([0,0,0],0,[0,1e-30,0,0]).quaternion,[0,1,0,0]);
+  assert.throws(()=>activateGaussian([0,0,0],0,[NaN,0,0,0]),/quaternion/);
 });
 test('lookAtCV gives +Z forward and eye is recovered from nontrivial extrinsics',()=>{
   const eye=[2,-3,-4],target=[.2,.6,1]; const v=lookAtCV(eye,target);

@@ -257,13 +257,13 @@ try {
       if(await localized.locator('photara-viewer').locator('[data-language]').count()!==0)throw new Error('Duplicate language selector in viewer');
       const switchedLabels=await localized.locator('header [data-language] option').allTextContents();
       if(switchedLabels.join('/')!==(chinese?'Chinese/English':'中文/英文'))throw new Error('Language option labels did not switch');
-      if(await localized.locator('h1').textContent()!==(chinese?'Space, from a new perspective.':'空间，换一个视角。'))throw new Error('Page language did not switch');
+      if(await localized.locator('h1').textContent()!==(chinese?'Your world.A new dimension.':'你的世界。全新的维度。'))throw new Error('Page language did not switch');
       if(await localized.locator('photara-viewer').locator('[data-name]').textContent()!==(chinese?'Gaussian demo scene':'合成 Gaussian 示例'))throw new Error('Loaded demo label did not switch');
       await localized.reload();
       await localized.waitForFunction(()=>document.querySelector('photara-viewer')?.viewer);
       if(await localized.locator('header [data-language]').inputValue()!==override)throw new Error('Language preference was not persisted');
       await localized.evaluate(async()=>{const {setLanguage}=await import('/src/i18n.js');setLanguage('auto');});
-      if(await localized.locator('h1').textContent()!==(chinese?'空间，换一个视角。':'Space, from a new perspective.'))throw new Error('Auto did not restore system language');
+      if(await localized.locator('h1').textContent()!==(chinese?'你的世界。全新的维度。':'Your world.A new dimension.'))throw new Error('Auto did not restore system language');
       await localized.close();
     }
     result.ui.push('Chinese/English system locales, fallback, dynamic labels and mobile layout');

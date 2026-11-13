@@ -17,10 +17,13 @@ export function activateGaussian(logScales, logit, quaternion, filter = 0) {
     factor *= raw / scales[a];
   }
   const norm = Math.hypot(...quaternion);
-  if (!(norm > 1e-10)) throw new Error('Gaussian quaternion must have a nonzero norm');
+  if (!Number.isFinite(norm)) throw new Error('Gaussian quaternion must be finite');
+  // Some exporters leave degenerate rotations on a few points. Preserve the
+  // scene using identity for an exactly zero rotation; finite nonzero values
+  // remain normalizable even below the former arbitrary norm threshold.
   const e = Math.exp(-Math.abs(logit));
   const opacity = (logit >= 0 ? 1 / (1 + e) : e / (1 + e)) * factor;
-  return { scales, opacity, quaternion: quaternion.map(v => v / norm) };
+  return { scales, opacity, quaternion: norm > 0 ? quaternion.map(v => v / norm) : [1, 0, 0, 0] };
 }
 
 export function validateModel(model) {
