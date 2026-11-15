@@ -2,9 +2,7 @@
 
 A WebGPU Gaussian Splatting viewer and embeddable renderer following Photara's 3DGS / 3DGUT conventions. Built with native ES Modules and WGSL, with no third-party runtime dependencies.
 
-**Website: [https://fhymyang.github.io/photara-webgs/](https://fhymyang.github.io/photara-webgs/)**
-
-> This is the GitHub Pages deployment URL for this repository. It returned HTTP 404 when checked on November 15, 2026; a successful deployment has not yet been confirmed. Enable Pages and complete the deployment to make the site available.
+**Website: [https://fenghuayumo.github.io/photara-webgs/](https://fenghuayumo.github.io/photara-webgs/)**
 
 [Quick Start](#quick-start) · [Embedding](#embedding) · [Development and Testing](#development-and-testing) · [Deployment](#deployment) · [Documentation](#documentation)
 
@@ -30,7 +28,7 @@ There is no WebGL rendering fallback. Available device memory and GPU limits det
 ## Quick Start
 
 ```sh
-git clone https://github.com/fhymyang/photara-webgs.git
+git clone https://github.com/fenghuayumo/photara-webgs.git
 cd photara-webgs
 npm run dev
 ```
@@ -116,7 +114,7 @@ The repository includes a [GitHub Actions deployment workflow](.github/workflows
 1. In **Settings → Pages → Build and deployment → Source**, select **GitHub Actions**.
 2. Push to `master`, or manually run **Deploy GitHub Pages** from the Actions tab.
 3. The workflow runs core tests, builds the static site, and deploys `dist/`.
-4. Once deployment succeeds, visit the [Photara WebGS website](https://fhymyang.github.io/photara-webgs/). If a custom domain is configured, use the URL shown in Pages settings and the deployment output.
+4. Once deployment succeeds, visit the [Photara WebGS website](https://fenghuayumo.github.io/photara-webgs/). If a custom domain is configured, use the URL shown in Pages settings and the deployment output.
 
 GitHub Pages for private repositories requires an eligible account plan. The build includes only website assets, excluding local models and test reports. Visitors open their own model files.
 
@@ -147,7 +145,7 @@ The following technical documents are currently written in Chinese.
 
 ## Feedback and Contributions
 
-Report bugs and suggestions through [GitHub Issues](https://github.com/fhymyang/photara-webgs/issues). For rendering issues, include your browser and GPU, model format, reproduction steps, and screenshots or error messages. Run the relevant tests after making changes; GPU and format changes should also pass the corresponding browser regressions.
+Report bugs and suggestions through [GitHub Issues](https://github.com/fenghuayumo/photara-webgs/issues). For rendering issues, include your browser and GPU, model format, reproduction steps, and screenshots or error messages. Run the relevant tests after making changes; GPU and format changes should also pass the corresponding browser regressions.
 
 ## License
 
